@@ -1,0 +1,16 @@
+# Prompt template references
+# Full prompts stored in docs/prompts/*.md
+generation:
+  formal: "docs/prompts/formal.md"
+  sarcastic: "docs/prompts/sarcastic.md"
+  tech_humor: "docs/prompts/tech_humor.md"
+  non_tech_humor: "docs/prompts/non_tech_humor.md"
+
+validation:
+  template: "docs/prompts/validator.md"
+
+vision:
+  frame_analysis: |
+    Describe what you observe in these video frames.
+    Focus on: people, actions, objects, emotions, sequence of events.
+    Only describe what is visible. Do not infer motivations.

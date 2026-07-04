@@ -1,0 +1,17 @@
+# General application settings
+app:
+  name: "video-captioning-mvp"
+  version: "0.1.0"
+  log_level: "INFO"
+  output_dir: "output/"
+
+api:
+  fireworks_base_url: "https://api.fireworks.ai/inference/v1"
+  timeout_seconds: 60
+  max_retries: 3
+  retry_delay_seconds: 1
+
+logging:
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/pipeline.log"
+  console: true

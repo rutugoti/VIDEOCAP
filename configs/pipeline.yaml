@@ -1,0 +1,41 @@
+# Pipeline execution configuration
+sampling:
+  method: "uniform"  # uniform | adaptive
+  fps: 1.0           # frames per second
+  max_frames: 30
+  min_frames: 5
+
+perception:
+  parallel: true
+  timeout_seconds: 30
+  vision:
+    enabled: true
+  speech:
+    enabled: true
+  ocr:
+    enabled: true
+
+fusion:
+  min_confidence: 0.3
+  temporal_window_seconds: 2.0
+
+narrative:
+  max_events: 10
+  max_words: 100
+
+generation:
+  styles:
+    - formal
+    - sarcastic
+    - tech_humor
+    - non_tech_humor
+  max_caption_words: 35
+  min_caption_words: 10
+
+validation:
+  enabled: true
+  hallucination_check: true
+  style_leakage_check: true
+  fact_drift_check: true
+  retry_on_failure: true
+  max_retries: 2

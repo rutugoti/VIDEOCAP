@@ -1,0 +1,60 @@
+# Environment variables
+.env
+*.key
+*.secret
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs and outputs
+logs/
+output/
+downloads/
+temp/
+
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Environment Variables
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+logs/
+*.log
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store
+Thumbs.db
+
+*.md
+*.json
+
+*.mmd   
