@@ -268,7 +268,52 @@ class MockLLMProvider(LLMProvider):
         sys_lower = system_prompt.lower()
 
         # Check system prompt first (specific role indicators to avoid positive/negative rule collisions)
-        if "software engineer" in sys_lower or "tech_humor" in sys_lower:
+        if "fact-checker" in sys_lower or "validator" in sys_lower:
+            caption_part = ""
+            if "caption:" in prompt_lower:
+                parts = prompt_lower.split("caption:")
+                if len(parts) > 1:
+                    after_caption = parts[1]
+                    if "report your findings" in after_caption:
+                        caption_part = after_caption.split("report your findings")[0].strip()
+                    else:
+                        caption_part = after_caption.strip()
+            else:
+                caption_part = prompt_lower
+
+            if "hallucinate" in caption_part:
+                return """{
+                    "hallucinations": ["caption mentions a red car not in the source"],
+                    "missing_facts": [],
+                    "fact_drift": [],
+                    "style_match": true,
+                    "overall_pass": false
+                }"""
+            elif "drift" in caption_part:
+                return """{
+                    "hallucinations": [],
+                    "missing_facts": [],
+                    "fact_drift": ["coffee maker changed to toaster"],
+                    "style_match": true,
+                    "overall_pass": false
+                }"""
+            elif "leakage" in caption_part or "leak" in caption_part:
+                return """{
+                    "hallucinations": [],
+                    "missing_facts": [],
+                    "fact_drift": [],
+                    "style_match": false,
+                    "overall_pass": false
+                }"""
+            else:
+                return """{
+                    "hallucinations": [],
+                    "missing_facts": [],
+                    "fact_drift": [],
+                    "style_match": true,
+                    "overall_pass": true
+                }"""
+        elif "software engineer" in sys_lower or "tech_humor" in sys_lower:
             return "EventLoop returned status code 200 after resolving kitchen tasks successfully and flushing the local cache."
         elif "funny social media" in sys_lower or "non_tech_humor" in sys_lower or "non-tech" in sys_lower:
             return "Well, the kitchen is clean but the coffee is gone. Classic morning tragedy that happens to the best of us."
