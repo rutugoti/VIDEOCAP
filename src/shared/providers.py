@@ -265,6 +265,19 @@ class MockLLMProvider(LLMProvider):
     ) -> str:
         # Pre-canned mock responses depending on keyword detection
         prompt_lower = prompt.lower()
+        sys_lower = system_prompt.lower()
+
+        # Check system prompt first (specific role indicators to avoid positive/negative rule collisions)
+        if "software engineer" in sys_lower or "tech_humor" in sys_lower:
+            return "EventLoop returned status code 200 after resolving kitchen tasks successfully and flushing the local cache."
+        elif "funny social media" in sys_lower or "non_tech_humor" in sys_lower or "non-tech" in sys_lower:
+            return "Well, the kitchen is clean but the coffee is gone. Classic morning tragedy that happens to the best of us."
+        elif "sarcastic" in sys_lower:
+            return "Oh fantastic, another video where events happen. Absolutely groundbreaking, and I am completely thrilled by this development."
+        elif "technical writer" in sys_lower or "formal" in sys_lower:
+            return "A formal rewrite of the video narrative detailing events sequentially, ensuring all facts are preserved."
+
+        # Fallback to prompt-based checks
         if "narrative" in prompt_lower or "compress" in prompt_lower or "summary" in prompt_lower:
             return """{
                 "text": "A person enters the kitchen, starts the coffee maker, and exits.",
@@ -310,13 +323,13 @@ class MockLLMProvider(LLMProvider):
                 }
             ]"""
         elif "formal" in prompt_lower:
-            return "A formal rewrite of the video narrative detailing events sequentially."
+            return "A formal rewrite of the video narrative detailing events sequentially, ensuring all facts are preserved."
         elif "sarcastic" in prompt_lower:
-            return "Oh fantastic, another video where events happen. Absolutely groundbreaking."
-        elif "tech" in prompt_lower and "humor" in prompt_lower:
-            return "EventLoop returned status code 200 after resolving kitchen tasks successfully."
-        elif "humor" in prompt_lower:
-            return "Well, the kitchen is clean but the coffee is gone. Classic morning tragedy."
+            return "Oh fantastic, another video where events happen. Absolutely groundbreaking, and I am completely thrilled by this development."
+        elif "tech_humor" in prompt_lower or "software engineering" in prompt_lower or "programming" in prompt_lower or "tech metaphor" in prompt_lower:
+            return "EventLoop returned status code 200 after resolving kitchen tasks successfully and flushing the local cache."
+        elif "humor" in prompt_lower or "funny" in prompt_lower:
+            return "Well, the kitchen is clean but the coffee is gone. Classic morning tragedy that happens to the best of us."
         return "Generic mock LLM text response."
 
 
