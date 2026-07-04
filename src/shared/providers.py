@@ -265,7 +265,26 @@ class MockLLMProvider(LLMProvider):
     ) -> str:
         # Pre-canned mock responses depending on keyword detection
         prompt_lower = prompt.lower()
-        if "fuse" in prompt_lower or "event" in prompt_lower:
+        if "narrative" in prompt_lower or "compress" in prompt_lower or "summary" in prompt_lower:
+            return """{
+                "text": "A person enters the kitchen, starts the coffee maker, and exits.",
+                "key_events": [
+                    "enters kitchen",
+                    "starts coffee maker",
+                    "exits kitchen"
+                ],
+                "salience_scores": {
+                    "enters kitchen": 0.50,
+                    "starts coffee maker": 0.95,
+                    "exits kitchen": 0.40
+                },
+                "evidence_mapping": {
+                    "enters kitchen": ["visual"],
+                    "starts coffee maker": ["visual", "audio"],
+                    "exits kitchen": ["visual"]
+                }
+            }"""
+        elif "fuse" in prompt_lower or "fusion" in prompt_lower:
             return """[
                 {
                     "description": "A person enters the kitchen and inspects the modern appliances.",
@@ -298,8 +317,6 @@ class MockLLMProvider(LLMProvider):
             return "EventLoop returned status code 200 after resolving kitchen tasks successfully."
         elif "humor" in prompt_lower:
             return "Well, the kitchen is clean but the coffee is gone. Classic morning tragedy."
-        elif "narrative" in prompt_lower or "describe" in prompt_lower:
-            return "A person enters the kitchen, starts the coffee maker, and exits."
         return "Generic mock LLM text response."
 
 
