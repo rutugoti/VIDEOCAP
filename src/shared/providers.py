@@ -265,7 +265,32 @@ class MockLLMProvider(LLMProvider):
     ) -> str:
         # Pre-canned mock responses depending on keyword detection
         prompt_lower = prompt.lower()
-        if "formal" in prompt_lower:
+        if "fuse" in prompt_lower or "event" in prompt_lower:
+            return """[
+                {
+                    "description": "A person enters the kitchen and inspects the modern appliances.",
+                    "actors": ["person"],
+                    "actions": ["enters", "inspects"],
+                    "objects": ["appliances"],
+                    "timestamp_start": 0.0,
+                    "timestamp_end": 2.0,
+                    "confidence": 0.95,
+                    "evidence_sources": ["visual"],
+                    "salience": 0.8
+                },
+                {
+                    "description": "A person speaks and transcribes audio context.",
+                    "actors": ["person"],
+                    "actions": ["speaks"],
+                    "objects": [],
+                    "timestamp_start": 2.0,
+                    "timestamp_end": 5.0,
+                    "confidence": 0.90,
+                    "evidence_sources": ["audio"],
+                    "salience": 0.7
+                }
+            ]"""
+        elif "formal" in prompt_lower:
             return "A formal rewrite of the video narrative detailing events sequentially."
         elif "sarcastic" in prompt_lower:
             return "Oh fantastic, another video where events happen. Absolutely groundbreaking."
