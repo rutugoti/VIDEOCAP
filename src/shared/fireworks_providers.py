@@ -2,9 +2,11 @@ import base64
 import io
 import json
 import logging
+import time
 from typing import List, Optional
 from concurrent.futures import ThreadPoolExecutor
 from openai import OpenAI
+import openai
 
 from src.shared.models import Sample, Observation
 from src.shared.providers import (
@@ -20,6 +22,93 @@ from src.shared.providers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_and_repair_json(text: str) -> dict | list:
+    """Robust parser that strips markdown/formatting wrappers and performs automatic repair attempts on malformed JSON."""
+    text = text.strip()
+    if not text:
+        return {}
+
+    # Strip markdown code blocks
+    if text.startswith("```"):
+        newline_idx = text.find("\n")
+        if newline_idx != -1:
+            text = text[newline_idx:].strip()
+        if text.endswith("```"):
+            text = text[:-3].strip()
+
+    # Direct parse attempt
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Extract JSON boundaries
+    start_bracket = text.find("[")
+    end_bracket = text.rfind("]")
+    start_brace = text.find("{")
+    end_brace = text.rfind("}")
+
+    if start_bracket != -1 and end_bracket != -1 and end_bracket > start_bracket:
+        candidate = text[start_bracket:end_bracket + 1]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+    if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
+        candidate = text[start_brace:end_brace + 1]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+    # Py-values replacement repair
+    cleaned = text
+    cleaned = cleaned.replace("None", "null").replace("True", "true").replace("False", "false")
+    # Try parsing boundaries again
+    for boundary in ["{", "["]:
+        idx = cleaned.find(boundary)
+        if idx != -1:
+            r_boundary = "}" if boundary == "{" else "]"
+            ridx = cleaned.rfind(r_boundary)
+            if ridx != -1:
+                try:
+                    return json.loads(cleaned[idx:ridx + 1])
+                except json.JSONDecodeError:
+                    pass
+
+    return {}
+
+
+def _call_openai_with_retry(api_call_fn, max_retries: int = 3, base_delay: float = 1.0, max_delay: float = 8.0):
+    """Executes OpenAI client API call with exponential backoff, retrying only transient failures."""
+    attempt = 0
+    while True:
+        try:
+            return api_call_fn()
+        except (openai.RateLimitError, openai.InternalServerError, openai.APIConnectionError, openai.APITimeoutError) as e:
+            attempt += 1
+            if attempt > max_retries:
+                logger.error(f"Transient error persisted after {max_retries} retries: {e}")
+                raise ProviderError(f"API call failed after max retries: {e}") from e
+            delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
+            logger.warning(f"Transient API error ({e}). Retrying in {delay:.2f}s (Attempt {attempt}/{max_retries})...")
+            time.sleep(delay)
+        except openai.APIStatusError as e:
+            status_code = getattr(e, "status_code", None)
+            if status_code in (429, 500, 502, 503, 504):
+                attempt += 1
+                if attempt > max_retries:
+                    raise ProviderError(f"API call failed after max retries: {e}") from e
+                delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
+                logger.warning(f"Transient API status error {status_code}. Retrying in {delay:.2f}s (Attempt {attempt}/{max_retries})...")
+                time.sleep(delay)
+            else:
+                raise ProviderError(f"Non-transient API status error {status_code}: {e}") from e
+        except Exception as e:
+            raise ProviderError(f"API call failed: {e}") from e
 
 
 class FireworksVisionProvider(VisionProvider):
@@ -67,39 +156,66 @@ class FireworksVisionProvider(VisionProvider):
                 "Return ONLY the valid JSON list. Do not wrap in markdown or add notes."
             )
 
+            def _api_call():
+                try:
+                    return self.client.chat.completions.create(
+                        model=config.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": prompt},
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {"url": image_url}
+                                    }
+                                ]
+                            }
+                        ],
+                        max_tokens=config.max_tokens or 1024,
+                        temperature=config.temperature or 0.2,
+                        response_format={"type": "json_object"}
+                    )
+                except openai.BadRequestError:
+                    return self.client.chat.completions.create(
+                        model=config.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": prompt},
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {"url": image_url}
+                                    }
+                                ]
+                            }
+                        ],
+                        max_tokens=config.max_tokens or 1024,
+                        temperature=config.temperature or 0.2
+                    )
+
             try:
-                response = self.client.chat.completions.create(
-                    model=config.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": image_url}
-                                }
-                            ]
-                        }
-                    ],
-                    max_tokens=config.max_tokens or 1024,
-                    temperature=config.temperature or 0.2
-                )
+                response = _call_openai_with_retry(_api_call)
                 text = response.choices[0].message.content.strip()
-                parsed = self._parse_json_list(text)
+                parsed = _parse_and_repair_json(text)
+                if isinstance(parsed, dict):
+                    parsed = [parsed]
                 
                 res_obs = []
-                for item in parsed:
-                    res_obs.append(
-                        Observation(
-                            content=item.get("content", "unspecified visual observation"),
-                            timestamp=frame.timestamp,
-                            confidence=item.get("confidence", 0.9),
-                            source="visual",
-                            observation_type=item.get("observation_type", "action")
+                if isinstance(parsed, list):
+                    for item in parsed:
+                        res_obs.append(
+                            Observation(
+                                content=item.get("content", "unspecified visual observation"),
+                                timestamp=frame.timestamp,
+                                confidence=item.get("confidence", 0.9),
+                                source="visual",
+                                observation_type=item.get("observation_type", "action")
+                            )
                         )
-                    )
                 return res_obs
             except Exception as e:
                 logger.error(f"Fireworks Vision API failed at {frame.timestamp}s: {e}")
@@ -114,45 +230,6 @@ class FireworksVisionProvider(VisionProvider):
         except Exception as e:
             logger.error(f"Vision provider analysis failed: {e}")
             raise ProviderError(f"Vision provider analysis failed: {e}") from e
-
-    def _parse_json_list(self, text: str) -> List[dict]:
-        """Robust parser to extract a JSON list from a chat response."""
-        text = text.strip()
-        if not text:
-            return []
-
-        # Strip markdown wrappers if any
-        if text.startswith("```"):
-            newline_idx = text.find("\n")
-            if newline_idx != -1:
-                text = text[newline_idx:].strip()
-            if text.endswith("```"):
-                text = text[:-3].strip()
-
-        start = text.find("[")
-        end = text.rfind("]")
-
-        if start != -1 and end != -1 and end > start:
-            try:
-                data = json.loads(text[start:end + 1])
-                if isinstance(data, list):
-                    return data
-            except Exception:
-                pass
-
-        # Try parsing as a single dictionary
-        start_dict = text.find("{")
-        end_dict = text.rfind("}")
-        if start_dict != -1 and end_dict != -1 and end_dict > start_dict:
-            try:
-                data = json.loads(text[start_dict:end_dict + 1])
-                if isinstance(data, dict):
-                    return [data]
-            except Exception:
-                pass
-
-        # Parse line by line fallback
-        return [{"content": text[:200], "confidence": 0.8, "observation_type": "scene"}]
 
     def _get_mock_observations(self, frames: List[Sample]) -> List[Observation]:
         """Offline fallback to prevent API calls in tests."""
@@ -208,12 +285,16 @@ class FireworksAudioProvider(AudioProvider):
                 return None
 
             audio_file = ("segment.wav", io.BytesIO(frame.audio_segment), "audio/wav")
-            try:
-                response = self.client.audio.transcriptions.create(
+            
+            def _api_call():
+                return self.client.audio.transcriptions.create(
                     model=config.model,
                     file=audio_file,
                     language=config.language or "en"
                 )
+
+            try:
+                response = _call_openai_with_retry(_api_call)
                 text = response.text.strip()
                 if text:
                     return Observation(
@@ -299,41 +380,68 @@ class FireworksOCRProvider(OCRProvider):
                 "Return ONLY the valid JSON list. If no text is visible, return an empty list."
             )
 
+            def _api_call():
+                try:
+                    return self.client.chat.completions.create(
+                        model=config.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": "Extract all visible text in this image."},
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {"url": image_url}
+                                    }
+                                ]
+                            }
+                        ],
+                        max_tokens=config.max_tokens or 1024,
+                        temperature=0.1,
+                        response_format={"type": "json_object"}
+                    )
+                except openai.BadRequestError:
+                    return self.client.chat.completions.create(
+                        model=config.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": "Extract all visible text in this image."},
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {"url": image_url}
+                                    }
+                                ]
+                            }
+                        ],
+                        max_tokens=config.max_tokens or 1024,
+                        temperature=0.1
+                    )
+
             try:
-                response = self.client.chat.completions.create(
-                    model=config.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": "Extract all visible text in this image."},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": image_url}
-                                }
-                            ]
-                        }
-                    ],
-                    max_tokens=config.max_tokens or 1024,
-                    temperature=0.1
-                )
+                response = _call_openai_with_retry(_api_call)
                 text = response.choices[0].message.content.strip()
-                parsed = self._parse_json_list(text)
+                parsed = _parse_and_repair_json(text)
+                if isinstance(parsed, dict):
+                    parsed = [parsed]
                 
                 res_obs = []
-                for item in parsed:
-                    val = item.get("text", "").strip()
-                    if val:
-                        res_obs.append(
-                            Observation(
-                                content=val,
-                                timestamp=frame.timestamp,
-                                confidence=item.get("confidence", 0.9),
-                                source="text",
-                                observation_type="ocr_text"
+                if isinstance(parsed, list):
+                    for item in parsed:
+                        val = item.get("text", "").strip()
+                        if val:
+                            res_obs.append(
+                                Observation(
+                                    content=val,
+                                    timestamp=frame.timestamp,
+                                    confidence=item.get("confidence", 0.9),
+                                    source="text",
+                                    observation_type="ocr_text"
+                                )
                             )
-                        )
                 return res_obs
             except Exception as e:
                 logger.error(f"Fireworks OCR API failed at {frame.timestamp}s: {e}")
@@ -348,41 +456,6 @@ class FireworksOCRProvider(OCRProvider):
         except Exception as e:
             logger.error(f"OCR provider extraction failed: {e}")
             raise ProviderError(f"OCR provider extraction failed: {e}") from e
-
-    def _parse_json_list(self, text: str) -> List[dict]:
-        text = text.strip()
-        if not text:
-            return []
-
-        if text.startswith("```"):
-            newline_idx = text.find("\n")
-            if newline_idx != -1:
-                text = text[newline_idx:].strip()
-            if text.endswith("```"):
-                text = text[:-3].strip()
-
-        start = text.find("[")
-        end = text.rfind("]")
-
-        if start != -1 and end != -1 and end > start:
-            try:
-                data = json.loads(text[start:end + 1])
-                if isinstance(data, list):
-                    return data
-            except Exception:
-                pass
-
-        start_dict = text.find("{")
-        end_dict = text.rfind("}")
-        if start_dict != -1 and end_dict != -1 and end_dict > start_dict:
-            try:
-                data = json.loads(text[start_dict:end_dict + 1])
-                if isinstance(data, dict):
-                    return [data]
-            except Exception:
-                pass
-
-        return []
 
     def _get_mock_ocr(self, frames: List[Sample]) -> List[Observation]:
         obs = []
@@ -420,18 +493,31 @@ class FireworksLLMProvider(LLMProvider):
             from src.shared.providers import MockLLMProvider
             return MockLLMProvider().generate(prompt, system_prompt, config)
 
-        try:
-            messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": prompt})
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
 
-            response = self.client.chat.completions.create(
-                model=config.model,
-                messages=messages,
-                max_tokens=config.max_tokens or 512,
-                temperature=config.temperature or 0.7
-            )
+        def _api_call():
+            try:
+                return self.client.chat.completions.create(
+                    model=config.model,
+                    messages=messages,
+                    max_tokens=config.max_tokens or 512,
+                    temperature=config.temperature or 0.7,
+                    response_format={"type": "json_object"}
+                )
+            except openai.BadRequestError:
+                # Fallback if json_object is not supported by this model
+                return self.client.chat.completions.create(
+                    model=config.model,
+                    messages=messages,
+                    max_tokens=config.max_tokens or 512,
+                    temperature=config.temperature or 0.7
+                )
+
+        try:
+            response = _call_openai_with_retry(_api_call)
             return response.choices[0].message.content.strip()
         except Exception as e:
             logger.error(f"Fireworks LLM generation failed: {e}")

@@ -72,7 +72,7 @@ class StyleGenerator:
             user_prompt = user_template.replace("{narrative}", narrative.text)
 
             # 3. Generate with LLM (incorporating word count retry loop)
-            caption_text = self._generate_with_retry(
+            caption_text, metadata = self._generate_with_retry(
                 style=style,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
@@ -85,7 +85,8 @@ class StyleGenerator:
             captions[style] = Caption(
                 text=caption_text,
                 style=style,
-                word_count=words_count
+                word_count=words_count,
+                metadata=metadata
             )
 
         return captions
@@ -122,74 +123,136 @@ class StyleGenerator:
             logger.error(f"Error reading prompt file {file_path}: {e}. Using fallback.")
             return self.FALLBACK_PROMPTS[style]["system"], self.FALLBACK_PROMPTS[style]["user"]
 
-    def _generate_with_retry(self, style: str, system_prompt: str, user_prompt: str, narrative_text: str) -> str:
-        """Query LLM, checking word counts and retrying once with an adjusted prompt if bounds are violated."""
-        # Attempt 1
+    def _generate_with_retry(self, style: str, system_prompt: str, user_prompt: str, narrative_text: str) -> Tuple[str, dict]:
+        """Draft, critique, rewrite, and enforce word limits using Gemma self-critique loop."""
+        import json
+        prompt_version = "v2.0"
+        model_version = self.llm_config.model
+        temp = self.llm_config.temperature
+
+        # 1. Draft caption
         try:
-            response = self.llm_provider.generate(
+            draft_text = self.llm_provider.generate(
                 prompt=user_prompt,
                 system_prompt=system_prompt,
                 config=self.llm_config
             )
+            draft_text = self._clean_caption(draft_text)
         except Exception as e:
-            logger.error(f"LLM generation failed for style '{style}' on attempt 1: {e}")
-            # If completely failed, generate a dummy/fallback caption to prevent crashing
-            return f"A backup caption representing the video narrative under {style} styling."
+            logger.error(f"Drafting caption failed for style '{style}' on attempt 1: {e}")
+            draft_text = f"A backup caption representing the video narrative under {style} styling."
 
-        caption_text = self._clean_caption(response)
-        words = caption_text.split()
-
-        # Validate word count limits
-        if self.min_caption_words <= len(words) <= self.max_caption_words:
-            return caption_text
-
-        # Attempt 2 (Retry with adjusted instructions if bounds violated)
-        logger.warning(
-            f"Style '{style}' output word count ({len(words)}) is out of bounds [{self.min_caption_words}, {self.max_caption_words}]. "
-            f"Retrying with word budget constraint reinforcement."
+        # 2. Critique caption
+        critique_system = (
+            "You are a critical quality assurance judge. Your job is to critique draft video captions for:\n"
+            "- Factual accuracy (check for hallucinations/invented facts)\n"
+            "- Style fidelity (ensure tone perfectly matches requested style)\n"
+            "- Grammar and spelling\n"
+            "- Word limits (strictly between 15 and 35 words)\n\n"
+            "Respond in valid JSON format only, matching this schema:\n"
+            "{\n"
+            "  \"missing_facts\": [\"missing fact 1\", ...],\n"
+            "  \"hallucinations\": [\"hallucinated fact 1\", ...],\n"
+            "  \"style_drift\": [\"style drift notes\", ...],\n"
+            "  \"grammar_issues\": [\"grammar issue 1\", ...],\n"
+            "  \"word_count_issue\": bool\n"
+            "}"
+        )
+        
+        critique_prompt = (
+            f"Narrative:\n{narrative_text}\n\n"
+            f"Draft Caption ({style} style):\n{draft_text}\n\n"
+            f"Critique this draft caption based on the narrative and style rules. Return the JSON object."
         )
 
-        adjusted_prompt = (
-            f"{user_prompt}\n\n"
-            f"CRITICAL BUDGET CONSTRAINT:\n"
-            f"Your previous attempt was '{caption_text}' ({len(words)} words).\n"
-            f"Please rewrite this caption to be strictly between {self.min_caption_words} and {self.max_caption_words} words. "
-            f"Ensure all original facts from the description are retained."
+        critique_data = {}
+        try:
+            critique_response = self.llm_provider.generate(
+                prompt=critique_prompt,
+                system_prompt=critique_system,
+                config=self.llm_config
+            )
+            from src.shared.fireworks_providers import _parse_and_repair_json
+            critique_data = _parse_and_repair_json(critique_response)
+        except Exception as e:
+            logger.warning(f"Critique generation failed for style '{style}': {e}")
+
+        # 3. Rewrite caption using critique feedback
+        rewrite_prompt = (
+            f"Narrative:\n{narrative_text}\n\n"
+            f"Draft Caption:\n{draft_text}\n\n"
+            f"Critique Feedback:\n{json.dumps(critique_data)}\n\n"
+            f"Rewrite the caption to fix all critique issues. Ensure it is strictly between {self.min_caption_words} and {self.max_caption_words} words."
         )
 
         try:
-            retry_response = self.llm_provider.generate(
-                prompt=adjusted_prompt,
+            rewrite_response = self.llm_provider.generate(
+                prompt=rewrite_prompt,
                 system_prompt=system_prompt,
                 config=self.llm_config
             )
-            retry_clean = self._clean_caption(retry_response)
-            retry_words = retry_clean.split()
-            
-            if self.min_caption_words <= len(retry_words) <= self.max_caption_words:
-                logger.info(f"Style '{style}' budget correction succeeded on attempt 2: {len(retry_words)} words.")
-                return retry_clean
-            
-            # Post-process (clipping/truncation) if it is still too long
-            if len(retry_words) > self.max_caption_words:
-                logger.warning(f"Style '{style}' still exceeds budget after retry. Truncating to {self.max_caption_words} words.")
-                return " ".join(retry_words[:self.max_caption_words]) + "."
-            
-            return retry_clean
-
+            final_text = self._clean_caption(rewrite_response)
         except Exception as e:
-            logger.error(f"Retry generation failed for style '{style}': {e}. Using attempt 1 output.")
-            return caption_text
+            logger.warning(f"Rewrite generation failed for style '{style}': {e}. Falling back to draft.")
+            final_text = draft_text
+
+        # 4. Word count limits check & sentence boundary truncation
+        words = final_text.split()
+        if len(words) > self.max_caption_words:
+            logger.warning(f"Style '{style}' output word count ({len(words)}) is out of bounds. Requesting shorter rewrite.")
+            shorter_prompt = (
+                f"Narrative:\n{narrative_text}\n\n"
+                f"Caption to shorten:\n{final_text}\n\n"
+                f"Rewrite this caption to be strictly under {self.max_caption_words} words. Do not invent any facts."
+            )
+            try:
+                shorter_response = self.llm_provider.generate(
+                    prompt=shorter_prompt,
+                    system_prompt=system_prompt,
+                    config=self.llm_config
+                )
+                final_text = self._clean_caption(shorter_response)
+                words = final_text.split()
+            except Exception as e:
+                logger.error(f"Shorter rewrite failed: {e}")
+
+            # If still too long, trim at sentence boundaries, NEVER cut sentences in half
+            if len(words) > self.max_caption_words:
+                logger.warning(f"Caption is still too long after rewrite. Trimming strictly at sentence boundaries.")
+                sentences = re.split(r'(?<=[.!?])\s+', final_text)
+                trimmed_parts = []
+                current_count = 0
+                for sentence in sentences:
+                    sentence_words = sentence.split()
+                    if current_count + len(sentence_words) <= self.max_caption_words:
+                        trimmed_parts.append(sentence)
+                        current_count += len(sentence_words)
+                    else:
+                        break
+                if trimmed_parts:
+                    final_text = " ".join(trimmed_parts)
+                else:
+                    first_sentence = sentences[0]
+                    first_words = first_sentence.split()
+                    final_text = " ".join(first_words[:self.max_caption_words])
+                    if not final_text.endswith("."):
+                        final_text += "."
+
+        metadata = {
+            "prompt_version": prompt_version,
+            "model_version": model_version,
+            "temperature": temp,
+            "draft": draft_text,
+            "critique": critique_data
+        }
+        return final_text, metadata
 
     def _clean_caption(self, text: str) -> str:
         """Strip enclosing quotes and extraneous formatting prefixes from the generated caption."""
         text = text.strip()
-        # Remove markdown bold/italics
         text = text.replace("**", "").replace("*", "")
-        # Strip enclosing quotes if generated by LLM
         if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
             text = text[1:-1].strip()
-        # Strip standard prefixes like "Formal Caption:", "Sarcastic Caption:", etc.
         prefixes = [
             "formal caption:", "sarcastic caption:", "tech humor caption:", "funny caption:",
             "formal:", "sarcastic:", "tech humor:", "humor:"

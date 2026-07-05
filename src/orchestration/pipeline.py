@@ -193,15 +193,22 @@ class PipelineOrchestrator:
         Returns:
             Dict mapping caption style name to Caption objects.
         """
+        import time
         logger.info(f"Starting pipeline orchestration for: {video_path}")
+        pipeline_start = time.time()
 
         # Step 1: Ingestion
+        t0 = time.time()
         descriptor = self.video_loader.load_video(video_path)
+        logger.info(f"Ingestion latency: {time.time() - t0:.2f}s | Format: {descriptor.format} | Duration: {descriptor.duration_seconds}s")
 
         # Step 2: Sampling
+        t0 = time.time()
         samples = self.adaptive_sampler.sample_video(descriptor)
+        logger.info(f"Sampling latency: {time.time() - t0:.2f}s | Frames sampled: {len(samples)}")
 
         # Step 3: Perception (Parallel / Sequential)
+        t0 = time.time()
         observations: List[Observation] = []
         perception_cfg = self.config.pipeline.perception
 
@@ -238,19 +245,30 @@ class PipelineOrchestrator:
             if perception_cfg.ocr.enabled:
                 observations.extend(self.ocr_processor.process(samples))
 
+        logger.info(f"Perception latency: {time.time() - t0:.2f}s | Total raw observations: {len(observations)}")
+
         # Step 4: Timeline Merging
+        t0 = time.time()
         timeline = self.timeline_builder.build_timeline(observations, descriptor.duration_seconds)
+        logger.info(f"Timeline building latency: {time.time() - t0:.2f}s")
 
         # Step 5: Event Fusion
+        t0 = time.time()
         events = self.fusion_engine.fuse_timeline(timeline)
+        logger.info(f"Fusion engine latency: {time.time() - t0:.2f}s | Fused events: {len(events)}")
 
         # Step 6: Semantic Graph Building
+        t0 = time.time()
         graph = self.graph_builder.build_graph(events)
+        logger.info(f"Graph building latency: {time.time() - t0:.2f}s | Graph nodes: {len(graph.nodes)} | Edges: {len(graph.edges)}")
 
         # Step 7: Narrative Builder
+        t0 = time.time()
         narrative = self.narrative_builder.build_narrative(graph)
+        logger.info(f"Narrative building latency: {time.time() - t0:.2f}s | Words: {len(narrative.text.split())}")
 
         # Step 8: Styled Caption Generation & Semantic Validation Retry Loop
+        t0 = time.time()
         val_cfg = self.config.pipeline.validation
         max_attempts = val_cfg.max_retries + 1 if val_cfg.enabled and val_cfg.retry_on_failure else 1
 
@@ -262,6 +280,15 @@ class PipelineOrchestrator:
             if val_cfg.enabled:
                 logger.info("Running SemanticValidator checks...")
                 report = self.validator.validate(captions, narrative)
+                
+                # Enrich metadata with validation and input context for explainability
+                for style, cap in captions.items():
+                    cap.metadata["narrative"] = narrative.text
+                    cap.metadata["events_used"] = [e.model_dump() for e in events]
+                    cap.metadata["observations_used"] = [o.model_dump() for o in observations]
+                    if style in report.per_caption:
+                        cap.metadata["validation_result"] = report.per_caption[style].model_dump()
+
                 if report.overall_pass:
                     logger.info("Semantic validation passed.")
                     break
@@ -275,9 +302,15 @@ class PipelineOrchestrator:
                     else:
                         logger.warning("Max validation attempts reached. Returning latest generated captions.")
             else:
+                # Still enrich basic narrative/event explainability when validation is disabled
+                for style, cap in captions.items():
+                    cap.metadata["narrative"] = narrative.text
+                    cap.metadata["events_used"] = [e.model_dump() for e in events]
+                    cap.metadata["observations_used"] = [o.model_dump() for o in observations]
                 break
 
-        logger.info(f"Pipeline orchestration successfully completed for: {video_path}")
+        logger.info(f"Generation/Validation stage latency: {time.time() - t0:.2f}s")
+        logger.info(f"Pipeline orchestration successfully completed. Total Latency: {time.time() - pipeline_start:.2f}s")
         return captions
 
     def process_batch(self, video_paths: List[str], output_path: str) -> List[Dict[str, str]]:

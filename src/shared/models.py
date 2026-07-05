@@ -113,15 +113,22 @@ class Caption(BaseModel):
     text: str
     style: Literal["formal", "sarcastic", "tech_humor", "non_tech_humor"]
     word_count: int = Field(..., ge=0)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class CaptionValidation(BaseModel):
-    """Validation report for an individual caption."""
+    """Validation report for an individual caption with detailed score dimensions."""
     style: str
     passed: bool
     hallucinations: List[str] = Field(default_factory=list)
     missing_facts: List[str] = Field(default_factory=list)
     style_adherence: float = Field(..., ge=0.0, le=1.0)
+    semantic_accuracy: Optional[float] = Field(None, ge=0.0, le=1.0)
+    hallucination_risk: Optional[float] = Field(None, ge=0.0, le=1.0)
+    grammar_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    temporal_consistency_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    word_budget_pass: Optional[bool] = None
+    overall_confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
 
 
 class ValidationReport(BaseModel):

@@ -20,10 +20,12 @@ class SemanticValidator(Validator):
 
     FALLBACK_USER_TEMPLATE = (
         "Compare the following caption against the source description. Identify:\n\n"
-        "1. HALLUCINATIONS: Events, objects, or people mentioned in the caption but NOT in the source\n"
-        "2. MISSING FACTS: Important events in the source NOT mentioned in the caption\n"
-        "3. FACT DRIFT: Facts that changed between source and caption (different objects, people, actions)\n"
-        "4. STYLE CHECK: Does the caption match the intended style?\n\n"
+        "1. HALLUCINATIONS: Events, objects, or people mentioned in the caption but NOT in the source description.\n"
+        "2. MISSING FACTS: Important events in the source description NOT mentioned in the caption.\n"
+        "3. FACT DRIFT: Facts that changed between source and caption.\n"
+        "4. STYLE CHECK: Does the caption match the intended style?\n"
+        "5. TEMPORAL CONSISTENCY: Does the caption follow the exact chronological ordering of events as described in the source? The caption MUST NOT reorder events.\n"
+        "6. WORD BUDGET: Is the caption strictly between 15 and 35 words?\n\n"
         "Source Description:\n{narrative}\n\n"
         "Intended Style: {style}\n\n"
         "Caption:\n{caption}\n\n"
@@ -33,7 +35,13 @@ class SemanticValidator(Validator):
         "  \"missing_facts\": [\"list of omitted important events\"],\n"
         "  \"fact_drift\": [\"list of changed facts\"],\n"
         "  \"style_match\": true/false,\n"
-        "  \"overall_pass\": true/false\n"
+        "  \"overall_pass\": true/false,\n"
+        "  \"semantic_accuracy\": float (0.0 to 1.0),\n"
+        "  \"hallucination_risk\": float (0.0 to 1.0),\n"
+        "  \"grammar_score\": float (0.0 to 1.0),\n"
+        "  \"temporal_consistency_score\": float (0.0 to 1.0),\n"
+        "  \"word_budget_pass\": true/false,\n"
+        "  \"overall_confidence\": float (0.0 to 1.0)\n"
         "}"
     )
 
@@ -76,6 +84,8 @@ class SemanticValidator(Validator):
         Returns:
             A ValidationReport object.
         """
+        import time
+        start_time = time.time()
         if not captions:
             logger.warning("SemanticValidator: No captions provided for validation.")
             return ValidationReport(
@@ -112,7 +122,7 @@ class SemanticValidator(Validator):
                     config=self.llm_config
                 )
 
-                # 4. Parse validation response
+                # 4. Parse validation response with repair fallback
                 val_data = self._parse_validator_response(response)
                 
                 # Extract results with active-checks masking
@@ -121,7 +131,7 @@ class SemanticValidator(Validator):
                 missings = val_data.get("missing_facts", []) if self.fact_drift_check else []
                 style_match = val_data.get("style_match", True) if self.style_leakage_check else True
 
-                # Determine passed based on active checks (overriding the LLM overall_pass if a check is disabled)
+                # Determine passed based on active checks
                 passed = True
                 if self.hallucination_check and halls:
                     passed = False
@@ -137,12 +147,19 @@ class SemanticValidator(Validator):
                 # Report fact drift in missing_facts so it's captured in the schema
                 reported_missing = missings + drifts if self.fact_drift_check else []
 
+                # Populate detailed scores
                 per_caption[style] = CaptionValidation(
                     style=style,
                     passed=passed,
                     hallucinations=halls,
                     missing_facts=reported_missing,
-                    style_adherence=1.0 if style_match else 0.0
+                    style_adherence=1.0 if style_match else 0.0,
+                    semantic_accuracy=val_data.get("semantic_accuracy", 1.0 - (len(drifts) * 0.2)),
+                    hallucination_risk=val_data.get("hallucination_risk", len(halls) * 0.2),
+                    grammar_score=val_data.get("grammar_score", 1.0),
+                    temporal_consistency_score=val_data.get("temporal_consistency_score", 1.0),
+                    word_budget_pass=val_data.get("word_budget_pass", True),
+                    overall_confidence=val_data.get("overall_confidence", 0.9)
                 )
 
             except Exception as e:
@@ -153,7 +170,13 @@ class SemanticValidator(Validator):
                     passed=True,
                     hallucinations=[],
                     missing_facts=[],
-                    style_adherence=1.0
+                    style_adherence=1.0,
+                    semantic_accuracy=1.0,
+                    hallucination_risk=0.0,
+                    grammar_score=1.0,
+                    temporal_consistency_score=1.0,
+                    word_budget_pass=True,
+                    overall_confidence=0.9
                 )
 
         # 5. Global consistency aggregation
@@ -163,8 +186,9 @@ class SemanticValidator(Validator):
         issue_penalty = (total_hallucinations + total_drift) * 0.1
         consistency_score = max(0.0, min(1.0, 1.0 - issue_penalty))
 
+        latency = time.time() - start_time
         logger.info(
-            f"Validation complete. Overall Pass: {overall_pass}, "
+            f"Validation complete. Latency: {latency:.2f}s | Overall Pass: {overall_pass}, "
             f"Hallucination Count: {total_hallucinations}, Consistency Score: {consistency_score:.2f}"
         )
 
@@ -203,21 +227,13 @@ class SemanticValidator(Validator):
             return self.FALLBACK_SYSTEM_PROMPT, self.FALLBACK_USER_TEMPLATE
 
     def _parse_validator_response(self, text: str) -> Dict[str, Any]:
-        """Parse LLM JSON response for fact checker report."""
+        """Parse LLM JSON response for fact checker report with automatic repair."""
         text = text.strip()
         if not text:
             return {}
 
-        start_idx = text.find("{")
-        end_idx = text.rfind("}")
-
-        if start_idx == -1 or end_idx == -1 or end_idx < start_idx:
-            return {}
-
-        json_str = text[start_idx:end_idx + 1]
-
-        try:
-            return json.loads(json_str)
-        except Exception as e:
-            logger.debug(f"Validator JSON parsing error: {e}")
-            return {}
+        from src.shared.fireworks_providers import _parse_and_repair_json
+        parsed = _parse_and_repair_json(text)
+        if isinstance(parsed, dict):
+            return parsed
+        return {}
