@@ -43,6 +43,7 @@ class PerceptionDetails(BaseModel):
 class PerceptionConfig(BaseModel):
     parallel: bool
     timeout_seconds: int
+    max_workers: Optional[int] = 3
     vision: PerceptionDetails
     speech: PerceptionDetails
     ocr: PerceptionDetails

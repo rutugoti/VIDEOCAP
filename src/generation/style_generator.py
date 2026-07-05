@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Tuple
 
 from src.shared.models import Narrative, Caption
 from src.shared.providers import LLMProvider, LLMConfig
+from src.shared.utils import sanitize_untrusted_input
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class StyleGenerator:
         self.llm_provider = llm_provider
         self.llm_config = llm_config or LLMConfig(
             provider="fireworks",
-            model="accounts/fireworks/models/llama-v3-70b-instruct",
+            model="accounts/fireworks/models/gemma-3-27b-it",
             max_tokens=256,
             temperature=0.7
         )
@@ -69,7 +70,7 @@ class StyleGenerator:
             system_prompt, user_template = self._load_prompt(style)
 
             # 2. Insert Narrative
-            user_prompt = user_template.replace("{narrative}", narrative.text)
+            user_prompt = user_template.replace("{narrative}", sanitize_untrusted_input(narrative.text))
 
             # 3. Generate with LLM (incorporating word count retry loop)
             caption_text, metadata = self._generate_with_retry(
@@ -160,8 +161,8 @@ class StyleGenerator:
         )
         
         critique_prompt = (
-            f"Narrative:\n{narrative_text}\n\n"
-            f"Draft Caption ({style} style):\n{draft_text}\n\n"
+            f"Narrative:\n<untrusted_input>\"{sanitize_untrusted_input(narrative_text)}\"</untrusted_input>\n\n"
+            f"Draft Caption ({style} style):\n<untrusted_input>\"{sanitize_untrusted_input(draft_text)}\"</untrusted_input>\n\n"
             f"Critique this draft caption based on the narrative and style rules. Return the JSON object."
         )
 
@@ -179,8 +180,8 @@ class StyleGenerator:
 
         # 3. Rewrite caption using critique feedback
         rewrite_prompt = (
-            f"Narrative:\n{narrative_text}\n\n"
-            f"Draft Caption:\n{draft_text}\n\n"
+            f"Narrative:\n<untrusted_input>\"{sanitize_untrusted_input(narrative_text)}\"</untrusted_input>\n\n"
+            f"Draft Caption:\n<untrusted_input>\"{sanitize_untrusted_input(draft_text)}\"</untrusted_input>\n\n"
             f"Critique Feedback:\n{json.dumps(critique_data)}\n\n"
             f"Rewrite the caption to fix all critique issues. Ensure it is strictly between {self.min_caption_words} and {self.max_caption_words} words."
         )

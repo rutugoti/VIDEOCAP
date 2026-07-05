@@ -107,9 +107,10 @@ def test_broken_llm_fallback():
     validator = SemanticValidator(llm_provider=broken_llm)
     report = validator.validate(captions, narrative)
 
-    # Should fall back to passing validation gracefully
-    assert report.overall_pass is True
-    assert report.per_caption["formal"].passed is True
+    # Should fail closed on exception
+    assert report.overall_pass is False
+    assert report.status == "UNKNOWN"
+    assert report.per_caption["formal"].passed is False
 
 
 def test_prompt_loading(tmp_path):

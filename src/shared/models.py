@@ -120,6 +120,7 @@ class CaptionValidation(BaseModel):
     """Validation report for an individual caption with detailed score dimensions."""
     style: str
     passed: bool
+    status: Literal["PASS", "FAIL", "UNKNOWN"] = "UNKNOWN"
     hallucinations: List[str] = Field(default_factory=list)
     missing_facts: List[str] = Field(default_factory=list)
     style_adherence: float = Field(..., ge=0.0, le=1.0)
@@ -134,6 +135,7 @@ class CaptionValidation(BaseModel):
 class ValidationReport(BaseModel):
     """Full semantic validation report across all generated captions."""
     overall_pass: bool
+    status: Literal["PASS", "FAIL", "UNKNOWN"] = "UNKNOWN"
     per_caption: Dict[str, CaptionValidation] = Field(default_factory=dict)
     hallucination_count: int = Field(..., ge=0)
     consistency_score: float = Field(..., ge=0.0, le=1.0)

@@ -8,6 +8,7 @@ sampling:
 perception:
   parallel: true
   timeout_seconds: 30
+  max_workers: 3
   vision:
     enabled: true
   speech:

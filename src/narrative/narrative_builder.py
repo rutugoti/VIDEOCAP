@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 
 from src.shared.models import SemanticGraph, Narrative, Event, GraphNode
 from src.shared.providers import LLMProvider, LLMConfig, ProviderError
+from src.shared.utils import sanitize_untrusted_input
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ class NarrativeBuilder:
         self.llm_provider = llm_provider
         self.llm_config = llm_config or LLMConfig(
             provider="fireworks",
-            model="accounts/fireworks/models/llama-v3-70b-instruct",
+            model="accounts/fireworks/models/gemma-3-27b-it",
             max_tokens=1024,
             temperature=0.1
         )
@@ -87,8 +88,9 @@ class NarrativeBuilder:
             t_start = node.attributes.get("timestamp_start", 0.0)
             salience = node.attributes.get("salience", 0.5)
             
+            sanitized_label = sanitize_untrusted_input(label)
             event_details.append(
-                f"- [ID: {node.id}] at {t_start:.1f}s: {label} (salience: {salience:.2f}, sources: {sources})"
+                f"- [ID: {node.id}] at {t_start:.1f}s: <untrusted_input>\"{sanitized_label}\"</untrusted_input> (salience: {salience:.2f}, sources: {sources})"
             )
 
         events_list_text = "\n".join(event_details)

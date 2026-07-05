@@ -1,7 +1,7 @@
 # Model provider configuration
 vision:
   provider: "fireworks"
-  model: "accounts/fireworks/models/llava-v1.6"  # Updated on launch day
+  model: "accounts/fireworks/models/gemma-4-31b-it"  # Updated to Gemma Multimodal VLM
   max_tokens: 4096
   temperature: 0.2
 
@@ -12,17 +12,17 @@ speech:
 
 ocr:
   provider: "fireworks"
-  model: "accounts/fireworks/models/llava-v1.6"
+  model: "accounts/fireworks/models/gemma-4-31b-it"  # Updated to Gemma Multimodal VLM
   max_tokens: 1024
 
 llm:
   provider: "fireworks"
-  model: "accounts/fireworks/models/llama-v3p1-70b"  # Updated on launch day
+  model: "accounts/fireworks/models/gemma-3-27b-it"  # Updated to Gemma Text Reasoning LLM
   max_tokens: 512
   temperature: 0.7
 
 validator:
   provider: "fireworks"
-  model: "accounts/fireworks/models/llama-v3p1-70b"
+  model: "accounts/fireworks/models/gemma-3-27b-it"  # Updated to Gemma Text Reasoning LLM
   max_tokens: 1024
   temperature: 0.1

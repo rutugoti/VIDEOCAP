@@ -247,14 +247,14 @@ def test_fireworks_providers_mock_mode():
     assert aud_obs[0].timestamp == 2.0
 
     # 3. OCR Provider
-    ocr_cfg = OCRConfig(provider="fireworks", model="accounts/fireworks/models/llava-v1.6")
+    ocr_cfg = OCRConfig(provider="fireworks", model="accounts/fireworks/models/gemma-4-31b-it")
     ocr_obs = ocr.extract_text([sample], ocr_cfg)
     assert len(ocr_obs) > 0
     assert ocr_obs[0].source == "text"
     assert ocr_obs[0].timestamp == 2.0
 
     # 4. LLM Provider
-    llm_cfg = LLMConfig(provider="fireworks", model="accounts/fireworks/models/llama-v3p1-70b")
+    llm_cfg = LLMConfig(provider="fireworks", model="accounts/fireworks/models/gemma-3-27b-it")
     response = llm.generate("State hello.", "You are a direct responder.", llm_cfg)
     assert isinstance(response, str)
     assert len(response) > 0

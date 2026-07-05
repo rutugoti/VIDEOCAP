@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple, Any
 
 from src.shared.models import Narrative, Caption, ValidationReport, CaptionValidation
 from src.shared.providers import Validator, LLMProvider, LLMConfig, ValidatorConfig
+from src.shared.utils import sanitize_untrusted_input
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ class SemanticValidator(Validator):
         self.llm_provider = llm_provider
         self.llm_config = llm_config or LLMConfig(
             provider="fireworks",
-            model="accounts/fireworks/models/llama-v3-70b-instruct",
+            model="accounts/fireworks/models/gemma-3-27b-it",
             max_tokens=512,
             temperature=0.1
         )
@@ -106,12 +107,12 @@ class SemanticValidator(Validator):
         for style, caption in captions.items():
             logger.info(f"Validating caption style: {style}")
 
-            # 2. Substitute template variables
+            # 2. Substitute template variables (sanitized to prevent prompt injection)
             user_prompt = (
                 user_template
-                .replace("{narrative}", narrative.text)
+                .replace("{narrative}", f"<untrusted_input>\"{sanitize_untrusted_input(narrative.text)}\"</untrusted_input>")
                 .replace("{style}", style)
-                .replace("{caption}", caption.text)
+                .replace("{caption}", f"<untrusted_input>\"{sanitize_untrusted_input(caption.text)}\"</untrusted_input>")
             )
 
             try:
@@ -140,6 +141,8 @@ class SemanticValidator(Validator):
                 if self.style_leakage_check and not style_match:
                     passed = False
 
+                status = "PASS" if passed else "FAIL"
+
                 total_hallucinations += len(halls)
                 total_drift += len(drifts)
                 total_missing += len(missings)
@@ -151,6 +154,7 @@ class SemanticValidator(Validator):
                 per_caption[style] = CaptionValidation(
                     style=style,
                     passed=passed,
+                    status=status,
                     hallucinations=halls,
                     missing_facts=reported_missing,
                     style_adherence=1.0 if style_match else 0.0,
@@ -163,37 +167,44 @@ class SemanticValidator(Validator):
                 )
 
             except Exception as e:
-                logger.error(f"SemanticValidator: LLM validation call failed for style '{style}': {e}. Using passing fallback.")
-                # We default to passing so we don't halt the entire pipeline in production due to validator rate limits
+                logger.error(f"SemanticValidator: LLM validation call failed for style '{style}': {e}. Using fail-closed UNKNOWN fallback.")
                 per_caption[style] = CaptionValidation(
                     style=style,
-                    passed=True,
+                    passed=False,
+                    status="UNKNOWN",
                     hallucinations=[],
                     missing_facts=[],
-                    style_adherence=1.0,
-                    semantic_accuracy=1.0,
-                    hallucination_risk=0.0,
-                    grammar_score=1.0,
-                    temporal_consistency_score=1.0,
-                    word_budget_pass=True,
-                    overall_confidence=0.9
+                    style_adherence=0.0,
+                    semantic_accuracy=0.0,
+                    hallucination_risk=1.0,
+                    grammar_score=0.0,
+                    temporal_consistency_score=0.0,
+                    word_budget_pass=False,
+                    overall_confidence=0.0
                 )
 
         # 5. Global consistency aggregation
         overall_pass = all(v.passed for v in per_caption.values())
         
+        overall_status = "PASS"
+        if any(v.status == "FAIL" for v in per_caption.values()):
+            overall_status = "FAIL"
+        elif any(v.status == "UNKNOWN" for v in per_caption.values()):
+            overall_status = "UNKNOWN"
+
         # Calculate consistency score: 1.0 minus penalty for issues, clamped to [0.0, 1.0]
         issue_penalty = (total_hallucinations + total_drift) * 0.1
         consistency_score = max(0.0, min(1.0, 1.0 - issue_penalty))
 
         latency = time.time() - start_time
         logger.info(
-            f"Validation complete. Latency: {latency:.2f}s | Overall Pass: {overall_pass}, "
+            f"Validation complete. Latency: {latency:.2f}s | Overall Pass: {overall_pass}, Status: {overall_status}, "
             f"Hallucination Count: {total_hallucinations}, Consistency Score: {consistency_score:.2f}"
         )
 
         return ValidationReport(
             overall_pass=overall_pass,
+            status=overall_status,
             per_caption=per_caption,
             hallucination_count=total_hallucinations,
             consistency_score=consistency_score
