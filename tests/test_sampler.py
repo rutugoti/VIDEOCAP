@@ -91,3 +91,18 @@ def test_sampling_with_audio(tmp_path):
     assert len(samples_with_audio) > 0
     # The first bytes of a WAV file are "RIFF"
     assert samples_with_audio[0].audio_segment.startswith(b"RIFF")
+
+
+def test_adaptive_sampling_complexity(tmp_path):
+    video_file = str(tmp_path / "test_adaptive.mp4")
+    create_dummy_video(video_file, duration=35.0, has_audio=False)
+
+    loader = VideoLoader(min_duration=30.0, max_duration=120.0)
+    desc = loader.load_video(video_file)
+
+    # Use adaptive complexity sampling
+    sampler = AdaptiveSampler(method="adaptive", max_frames=20, min_frames=5)
+    samples = sampler.sample_video(desc)
+
+    # Static dummy video has 0 complexity, so it should scale down to min_frames (5)
+    assert len(samples) == 5

@@ -27,6 +27,46 @@ class AdaptiveSampler:
         self.max_frames = max_frames
         self.min_frames = min_frames
 
+    def estimate_complexity(self, video_path: str) -> float:
+        """
+        Estimate video complexity using standard deviation of frame pixel intensity differences.
+        Returns a value between 0.0 (static) and 1.0 (highly dynamic/complex).
+        """
+        try:
+            with av.open(video_path) as container:
+                video_streams = container.streams.video
+                if not video_streams:
+                    return 0.5
+                video_stream = video_streams[0]
+
+                prev_gray = None
+                diffs = []
+                count = 0
+                
+                # Decode up to 10 frames to estimate complexity quickly
+                for frame in container.decode(video_stream):
+                    img = frame.to_image().convert("L")
+                    arr = np.array(img)
+                    if prev_gray is not None:
+                        diff = float(np.mean(np.abs(arr.astype(np.int16) - prev_gray.astype(np.int16))))
+                        diffs.append(diff)
+                    prev_gray = arr
+                    count += 1
+                    if count >= 10:
+                        break
+
+                if not diffs:
+                    return 0.5
+
+                # Normalize mean pixel difference to a 0.0 - 1.0 complexity score
+                avg_diff = sum(diffs) / len(diffs)
+                complexity = min(1.0, max(0.0, avg_diff / 40.0))
+                logger.info(f"Complexity estimation: avg_diff={avg_diff:.2f}, score={complexity:.2f}")
+                return complexity
+        except Exception as e:
+            logger.warning(f"Failed to estimate complexity, default to 0.5. Error: {e}")
+            return 0.5
+
     def sample_video(self, video_desc: VideoDescriptor) -> List[Sample]:
         """
         Sample the video into a list of Sample objects (containing frames and audio).
@@ -41,16 +81,29 @@ class AdaptiveSampler:
         duration = video_desc.duration_seconds
 
         # 1. Calculate number of samples
-        num_samples = int(duration * self.fps)
-        num_samples = max(self.min_frames, min(self.max_frames, num_samples))
+        if self.method == "adaptive":
+            complexity = self.estimate_complexity(video_path)
+            range_frames = self.max_frames - self.min_frames
+            num_samples = int(self.min_frames + complexity * range_frames)
+            num_samples = max(self.min_frames, min(self.max_frames, num_samples))
+            logger.info(
+                f"Sampling video: {Path(video_path).name} | "
+                f"Method: {self.method} | "
+                f"Complexity Score: {complexity:.2f} | "
+                f"Target Samples: {num_samples} | "
+                f"Interval: {duration / num_samples:.2f}s"
+            )
+        else:
+            num_samples = int(duration * self.fps)
+            num_samples = max(self.min_frames, min(self.max_frames, num_samples))
+            logger.info(
+                f"Sampling video: {Path(video_path).name} | "
+                f"Method: {self.method} | "
+                f"Target Samples: {num_samples} | "
+                f"Interval: {duration / num_samples:.2f}s"
+            )
+            
         interval = duration / num_samples
-
-        logger.info(
-            f"Sampling video: {Path(video_path).name} | "
-            f"Method: {self.method} | "
-            f"Target Samples: {num_samples} | "
-            f"Interval: {interval:.2f}s"
-        )
 
         # Target timestamps for each sample
         target_timestamps = [i * interval for i in range(num_samples)]
