@@ -155,11 +155,18 @@ def test_validator_scoring_report():
 def test_batch_processing_resume_checkpointing(tmp_path):
     from src.orchestration.pipeline import PipelineOrchestrator
     from src.config.settings import get_config
+    from src.shared.providers import MockLLMProvider, MockVisionProvider, MockAudioProvider, MockOCRProvider
     import os
     import json
     
     config = get_config()
-    orchestrator = PipelineOrchestrator(config)
+    orchestrator = PipelineOrchestrator(
+        config=config,
+        llm_provider=MockLLMProvider(),
+        vision_provider=MockVisionProvider(),
+        audio_provider=MockAudioProvider(),
+        ocr_provider=MockOCRProvider()
+    )
     
     call_count = 0
     def mock_process_video(video_path):

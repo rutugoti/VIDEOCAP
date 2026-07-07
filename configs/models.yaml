@@ -1,30 +1,31 @@
 # Model provider configuration
-# Providers can be a single string (e.g. "gemini") or a fallback list (e.g. ["gemini", "fireworks", "mock"])
+# Providers can be a single string (e.g. "groq") or a fallback list (e.g. ["groq", "fireworks"]).
+# There is no offline mock: if none of the listed providers has a usable API key,
+# the pipeline fails loudly rather than emitting fabricated captions.
 vision:
-  provider: ["gemini", "fireworks", "mock"]
-  model: "gemini-2.5-flash"  # Will fall back to fireworks or mock if gemini API key is not set
+  provider: ["groq", "fireworks"]
+  model: "meta-llama/llama-4-scout-17b-16e-instruct"  # Current Groq vision model
   max_tokens: 4096
   temperature: 0.2
 
 speech:
-  provider: ["fireworks", "openai", "mock"]
-  model: "whisper-v3"
+  provider: ["groq", "openai", "fireworks"]
+  model: "whisper-large-v3"
   language: "en"
 
 ocr:
-  provider: ["gemini", "fireworks", "mock"]
-  model: "gemini-2.5-flash"
+  provider: ["groq", "fireworks"]
+  model: "meta-llama/llama-4-scout-17b-16e-instruct"
   max_tokens: 1024
 
 llm:
-  provider: ["gemini", "fireworks", "mock"]
-  model: "gemini-2.5-flash"
+  provider: ["groq", "fireworks"]
+  model: "llama-3.3-70b-versatile"
   max_tokens: 512
   temperature: 0.7
 
 validator:
-  provider: ["gemini", "fireworks", "mock"]
-  model: "gemini-2.5-flash"
+  provider: ["groq", "fireworks"]
+  model: "llama-3.3-70b-versatile"
   max_tokens: 1024
   temperature: 0.1
-

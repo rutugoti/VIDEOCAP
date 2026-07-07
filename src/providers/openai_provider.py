@@ -79,7 +79,7 @@ class OpenAIProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider, E
 
     PROVIDER_NAME = "openai"
 
-    def __init__(self, api_key: str = "mock_key_for_testing", base_url: Optional[str] = None):
+    def __init__(self, api_key: str, base_url: Optional[str] = None):
         self.api_key = api_key
         self.base_url = base_url
         self.client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
@@ -105,11 +105,6 @@ class OpenAIProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider, E
     ) -> List[VisionObservation]:
         if not frames:
             return []
-
-        if self.api_key == "mock_key_for_testing":
-            from src.providers.mock_provider import MockProvider
-            mock_inst = MockProvider()
-            return mock_inst.analyze_frames(frames, prompt, config)
 
         observations: List[VisionObservation] = []
         model_name = config.model_name or "gpt-4o"
@@ -205,11 +200,6 @@ class OpenAIProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider, E
         if not frames:
             return []
 
-        if self.api_key == "mock_key_for_testing":
-            from src.providers.mock_provider import MockProvider
-            mock_inst = MockProvider()
-            return mock_inst.transcribe(frames, config)
-
         observations: List[SpeechObservation] = []
         model_name = config.model_name or "whisper-1"
 
@@ -268,11 +258,6 @@ class OpenAIProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider, E
         config: ProviderConfig
     ) -> List[OCRObservation]:
         # Reuse Vision model or vision endpoint
-        if self.api_key == "mock_key_for_testing":
-            from src.providers.mock_provider import MockProvider
-            mock_inst = MockProvider()
-            return mock_inst.extract_text(frames, config)
-
         observations: List[OCRObservation] = []
         model_name = config.model_name or "gpt-4o-mini"
 
@@ -365,11 +350,6 @@ class OpenAIProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider, E
         system_prompt: str,
         config: ProviderConfig
     ) -> LLMResponse:
-        if self.api_key == "mock_key_for_testing":
-            from src.providers.mock_provider import MockProvider
-            mock_inst = MockProvider()
-            return mock_inst.generate(prompt, system_prompt, config)
-
         model_name = config.model_name or "gpt-4o-mini"
         messages = []
         if system_prompt:
@@ -416,9 +396,6 @@ class OpenAIProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider, E
         text: str,
         config: ProviderConfig
     ) -> EmbeddingResponse:
-        if self.api_key == "mock_key_for_testing":
-            return EmbeddingResponse(embedding=[0.0]*1536, prompt_tokens=0, latency=0.01)
-
         model_name = config.model_name or "text-embedding-3-small"
 
         def _api_call():

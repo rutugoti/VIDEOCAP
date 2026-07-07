@@ -63,11 +63,20 @@ class PipelineOrchestrator:
         # 1. Load configuration
         self.config = config or get_config()
 
-        # 2. Assign/Fallback Providers
-        self.llm_provider = llm_provider or MockLLMProvider()
-        self.vision_provider = vision_provider or MockVisionProvider()
-        self.audio_provider = audio_provider or MockAudioProvider()
-        self.ocr_provider = ocr_provider or MockOCRProvider()
+        # 2. Require Providers (No mock fallbacks)
+        if llm_provider is None:
+            raise ValueError("llm_provider is required.")
+        if vision_provider is None:
+            raise ValueError("vision_provider is required.")
+        if audio_provider is None:
+            raise ValueError("audio_provider is required.")
+        if ocr_provider is None:
+            raise ValueError("ocr_provider is required.")
+
+        self.llm_provider = llm_provider
+        self.vision_provider = vision_provider
+        self.audio_provider = audio_provider
+        self.ocr_provider = ocr_provider
 
         # 3. Initialize Ingestion & Sampling Modules
         # Disable strict duration checks in loader if the configuration allows or bypass via defaults
@@ -263,6 +272,7 @@ class PipelineOrchestrator:
                     if perception_cfg.ocr.enabled:
                         futures[executor.submit(self.ocr_processor.process, samples)] = "ocr"
 
+                    failed_modules = []
                     try:
                         for future in as_completed(futures, timeout=perception_cfg.timeout_seconds):
                             proc_name = futures[future]
@@ -271,19 +281,43 @@ class PipelineOrchestrator:
                                 observations.extend(result)
                                 logger.info(f"Perception module '{proc_name}' finished with {len(result)} observations.")
                             except Exception as e:
-                                logger.error(f"Perception module '{proc_name}' failed with error: {e}")
-                                raise
+                                # Degrade gracefully: a single modality failing (e.g. a provider
+                                # rate limit) should not discard the real observations produced by
+                                # the others. Only a total wipeout is fatal.
+                                logger.error(f"Perception module '{proc_name}' failed with error: {e}. Continuing with other modalities.")
+                                failed_modules.append(proc_name)
                     except TimeoutError as e:
-                        logger.error(f"Parallel perception execution timed out after {perception_cfg.timeout_seconds}s.")
-                        raise ProviderError(f"Perception processing timed out: {e}") from e
+                        logger.error(f"Parallel perception execution timed out after {perception_cfg.timeout_seconds}s; using partial observations.")
+                        failed_modules.append("timeout")
+
+                    if not observations:
+                        raise ProviderError(
+                            f"All perception modalities failed ({', '.join(failed_modules) or 'unknown'}); "
+                            f"no observations produced."
+                        )
             else:
                 logger.info("Executing perception layers sequentially...")
+                seq_modules = []
                 if perception_cfg.vision.enabled:
-                    observations.extend(self.vision_processor.process(samples))
+                    seq_modules.append(("vision", lambda: self.vision_processor.process(samples)))
                 if perception_cfg.speech.enabled:
-                    observations.extend(self.speech_processor.process(samples, descriptor.has_audio))
+                    seq_modules.append(("speech", lambda: self.speech_processor.process(samples, descriptor.has_audio)))
                 if perception_cfg.ocr.enabled:
-                    observations.extend(self.ocr_processor.process(samples))
+                    seq_modules.append(("ocr", lambda: self.ocr_processor.process(samples)))
+
+                failed_modules = []
+                for proc_name, run in seq_modules:
+                    try:
+                        observations.extend(run())
+                    except Exception as e:
+                        logger.error(f"Perception module '{proc_name}' failed with error: {e}. Continuing with other modalities.")
+                        failed_modules.append(proc_name)
+
+                if not observations:
+                    raise ProviderError(
+                        f"All perception modalities failed ({', '.join(failed_modules) or 'unknown'}); "
+                        f"no observations produced."
+                    )
 
             save_to_cache(perception_key, [o.model_dump() for o in observations])
 

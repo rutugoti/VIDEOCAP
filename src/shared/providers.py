@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Literal, Optional
-from pydantic import BaseModel
+from typing import Any, Dict, List, Literal, Optional, Union
+from pydantic import BaseModel, Field
 
 # Import core schemas
 from src.shared.models import (
@@ -52,8 +52,6 @@ class ValidationError(Exception):
 # Config Schemas
 # =====================================================================
 
-from typing import Union
-
 class VisionConfig(BaseModel):
     provider: Union[str, List[str]]
     model: str
@@ -78,6 +76,7 @@ class LLMConfig(BaseModel):
     model: str
     max_tokens: int = 512
     temperature: float = 0.7
+    extra_params: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ValidatorConfig(BaseModel):
@@ -553,7 +552,8 @@ class LegacyLLMProviderAdapter(LLMProvider):
             provider_name=config.provider,
             model_name=config.model,
             max_tokens=config.max_tokens,
-            temperature=config.temperature
+            temperature=config.temperature,
+            extra_params=config.extra_params
         )
         res = self.agnostic_provider.generate(prompt, system_prompt, p_cfg)
         return res.text

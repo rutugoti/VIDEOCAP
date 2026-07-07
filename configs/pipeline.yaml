@@ -2,16 +2,19 @@
 sampling:
   method: "adaptive"  # uniform | adaptive | scene_change | hybrid
   fps: 1.0           # frames per second
-  max_frames: 30
-  min_frames: 5
+  # Frame count is capped low to stay within Groq's free-tier tokens-per-minute
+  # budget (vision + OCR each send one image per frame). Raise these if you have a
+  # higher-throughput key.
+  max_frames: 6
+  min_frames: 4
   baseline_fps: 1.0
   min_scene_duration: 1.0
   motion_threshold: 15.0
   scene_change_threshold: 20.0
   silence_threshold: -40.0 # dB
   adaptive_sampling_limits:
-    max_samples: 30
-    min_samples: 5
+    max_samples: 6
+    min_samples: 4
 
 perception:
   parallel: true

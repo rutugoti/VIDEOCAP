@@ -129,11 +129,6 @@ class FireworksVisionProvider(VisionProvider):
         if not frames:
             return []
 
-        # If key is mock, bypass and return mock data for offline tests
-        if self.api_key == "mock_key_for_testing":
-            logger.info("Using mock vision provider response for testing key.")
-            return self._get_mock_observations(frames)
-
         observations: List[Observation] = []
 
         def _process_single(frame: Sample) -> List[Observation]:
@@ -235,34 +230,6 @@ class FireworksVisionProvider(VisionProvider):
             logger.error(f"Vision provider analysis failed: {e}")
             raise ProviderError(f"Vision provider analysis failed: {e}") from e
 
-    def _get_mock_observations(self, frames: List[Sample]) -> List[Observation]:
-        """Offline fallback to prevent API calls in tests."""
-        obs = []
-        for f in frames:
-            obs.append(
-                Observation(
-                    content=f"action observed at timestamp {f.timestamp}s",
-                    timestamp=f.timestamp,
-                    confidence=0.90,
-                    confidence_meta=Confidence(value=0.90, source="default"),
-                    source="visual",
-                    observation_type="action"
-                )
-            )
-            if f.sample_index == 0:
-                obs.append(
-                    Observation(
-                        content="kitchen scene with modern appliances",
-                        timestamp=f.timestamp,
-                        confidence=0.95,
-                        confidence_meta=Confidence(value=0.95, source="default"),
-                        source="visual",
-                        observation_type="scene"
-                    )
-                )
-        return obs
-
-
 class FireworksAudioProvider(AudioProvider):
     """Concrete AudioProvider calling the Fireworks Whisper API (OpenAI-compatible)."""
 
@@ -279,10 +246,6 @@ class FireworksAudioProvider(AudioProvider):
         """Transcribe audio segments from samples using the Fireworks Whisper API."""
         if not frames:
             return []
-
-        if self.api_key == "mock_key_for_testing":
-            logger.info("Using mock audio provider response for testing key.")
-            return self._get_mock_transcriptions(frames)
 
         observations: List[Observation] = []
 
@@ -336,23 +299,6 @@ class FireworksAudioProvider(AudioProvider):
             logger.error(f"Audio provider transcription failed: {e}")
             raise ProviderError(f"Audio provider transcription failed: {e}") from e
 
-    def _get_mock_transcriptions(self, frames: List[Sample]) -> List[Observation]:
-        obs = []
-        for f in frames:
-            if f.audio_segment is not None:
-                obs.append(
-                    Observation(
-                        content=f"spoken words recorded at {f.timestamp}s",
-                        timestamp=f.timestamp,
-                        confidence=0.88,
-                        confidence_meta=Confidence(value=0.88, source="default"),
-                        source="audio",
-                        observation_type="speech"
-                    )
-                )
-        return obs
-
-
 class FireworksOCRProvider(OCRProvider):
     """Concrete OCRProvider calling the Fireworks Vision model to extract text."""
 
@@ -369,10 +315,6 @@ class FireworksOCRProvider(OCRProvider):
         """Extract text from frames using Fireworks multimodal OCR API calls."""
         if not frames:
             return []
-
-        if self.api_key == "mock_key_for_testing":
-            logger.info("Using mock OCR provider response for testing key.")
-            return self._get_mock_ocr(frames)
 
         observations: List[Observation] = []
 
@@ -477,23 +419,6 @@ class FireworksOCRProvider(OCRProvider):
             logger.error(f"OCR provider extraction failed: {e}")
             raise ProviderError(f"OCR provider extraction failed: {e}") from e
 
-    def _get_mock_ocr(self, frames: List[Sample]) -> List[Observation]:
-        obs = []
-        for f in frames:
-            if f.sample_index == len(frames) // 2:
-                obs.append(
-                    Observation(
-                        content="mock brand logo text",
-                        timestamp=f.timestamp,
-                        confidence=0.92,
-                        confidence_meta=Confidence(value=0.92, source="default"),
-                        source="text",
-                        observation_type="ocr_text"
-                    )
-                )
-        return obs
-
-
 class FireworksLLMProvider(LLMProvider):
     """Concrete LLMProvider calling the Fireworks Chat Completion API."""
 
@@ -509,11 +434,6 @@ class FireworksLLMProvider(LLMProvider):
         config: LLMConfig
     ) -> str:
         """Query Fireworks LLM to generate text."""
-        if self.api_key == "mock_key_for_testing":
-            # Delegate to standard mock behavior logic
-            from src.shared.providers import MockLLMProvider
-            return MockLLMProvider().generate(prompt, system_prompt, config)
-
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})

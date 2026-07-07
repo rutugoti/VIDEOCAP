@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional, Union
 
 from src.providers.base import (
@@ -27,6 +28,14 @@ from src.providers.base import (
 from src.providers.registry import ProviderRegistry
 
 logger = logging.getLogger(__name__)
+
+# Unfilled .env placeholders that must be treated as "no key" so an unconfigured
+# provider fails loudly instead of making a doomed real call that 401s.
+_PLACEHOLDER_KEY_RE = re.compile(r"^\s*(|your[_-].*here|<.*>|changeme|x{3,}|placeholder|none)\s*$", re.I)
+
+
+def _is_placeholder_key(key: Optional[str]) -> bool:
+    return not key or bool(_PLACEHOLDER_KEY_RE.match(key))
 
 
 # =====================================================================
@@ -246,8 +255,7 @@ class ProviderFactory:
             return os.environ.get("FIREWORKS_API_KEY") or os.environ.get("FIREWORKS_API_KEY_ENV")
         elif p_clean == "openai":
             return os.environ.get("OPENAI_API_KEY")
-        elif p_clean in ("google", "gemini"):
-            return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+
         elif p_clean == "anthropic":
             return os.environ.get("ANTHROPIC_API_KEY")
         elif p_clean == "groq":
@@ -262,32 +270,28 @@ class ProviderFactory:
         providers: List[str],
         api_key: Optional[str] = None
     ) -> List[str]:
-        """Filters providers to only keep ones with available keys/configs unless mock mode is active."""
-        import sys
-        is_mock_mode = (
-            "--use-mocks" in sys.argv 
-            or os.environ.get("USE_MOCKS") == "true" 
-            or "pytest" in sys.modules
-            or "unittest" in sys.modules
-        )
-        
+        """
+        Keep only providers that can actually run. A real provider needs a usable
+        (non-placeholder) API key; ``ollama`` and ``mock`` are keyless providers. There is no
+        offline-mock fallback: if nothing in the chain is usable we raise, so the
+        pipeline fails loudly rather than emitting fabricated captions.
+        """
         filtered = []
         for p in providers:
             p_clean = p.strip().lower()
-            if p_clean in ("mock", "ollama"):
-                if p_clean == "mock" and not is_mock_mode:
-                    continue
+            if p_clean in ("ollama", "mock"):
                 filtered.append(p)
             else:
                 key = api_key or cls.get_env_api_key(p_clean)
-                if key:
+                # A placeholder key (e.g. "your_..._here") counts as no key.
+                if key and not _is_placeholder_key(key):
                     filtered.append(p)
-                    
+
         if not filtered:
             raise ValueError(
-                f"No active providers available in chain {providers}. "
-                f"Please configure at least one API key (e.g. GEMINI_API_KEY, FIREWORKS_API_KEY) "
-                f"or run with '--use-mocks' for offline mock mode."
+                f"No provider in chain {providers} has a usable API key. "
+                f"Configure a valid API key (e.g. GROQ_API_KEY, FIREWORKS_API_KEY) in your "
+                f"environment or .env file and restart the process."
             )
         return filtered
 
@@ -301,33 +305,18 @@ class ProviderFactory:
         """Instantiate a single provider by looking up from registry."""
         p_clean = provider_name.strip().lower()
         provider_class = ProviderRegistry.get(p_clean)
-        
-        # Resolve API Key & Base URL
-        resolved_key = api_key or cls.get_env_api_key(p_clean)
-        
-        # For testing compatibility / offline fallback
-        if not resolved_key and p_clean not in ("mock", "ollama"):
-            import sys
-            is_mock_mode = (
-                "--use-mocks" in sys.argv 
-                or os.environ.get("USE_MOCKS") == "true" 
-                or "pytest" in sys.modules
-                or "unittest" in sys.modules
-            )
-            if not is_mock_mode:
-                raise ValueError(
-                    f"Missing API key for provider '{provider_name}'. "
-                    f"Please set the appropriate environment variable (e.g., FIREWORKS_API_KEY, GEMINI_API_KEY) "
-                    f"or run with '--use-mocks' for offline testing."
-                )
-            resolved_key = "mock_key_for_testing"
 
-        # Instantiate provider
-        if p_clean in ("mock", "ollama"):
-            # Mock / Ollama doesn't strictly require key
-            return provider_class(base_url=base_url) if base_url else provider_class()
-        else:
-            return provider_class(api_key=resolved_key, base_url=base_url)
+        # ollama and mock are keyless; everything else requires a real key.
+        if p_clean in ("ollama", "mock"):
+            return provider_class(base_url=base_url) if (base_url and p_clean == "ollama") else provider_class()
+
+        resolved_key = api_key or cls.get_env_api_key(p_clean)
+        if not resolved_key or _is_placeholder_key(resolved_key):
+            raise ValueError(
+                f"Missing API key for provider '{provider_name}'. "
+                f"Set the appropriate environment variable (e.g. FIREWORKS_API_KEY, GROQ_API_KEY)."
+            )
+        return provider_class(api_key=resolved_key, base_url=base_url)
 
     @classmethod
     def get_vision(

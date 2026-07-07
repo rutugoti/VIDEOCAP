@@ -151,7 +151,8 @@ class StyleGenerator:
                 provider=self.llm_config.provider,
                 model=self.llm_config.model,
                 max_tokens=self.llm_config.max_tokens or 512,
-                temperature=self.llm_config.temperature
+                temperature=self.llm_config.temperature,
+                extra_params={"json_mode": True}
             )
             response = self.llm_provider.generate(
                 prompt=user_prompt,

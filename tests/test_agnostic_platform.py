@@ -15,7 +15,7 @@ from src.providers.registry import ProviderRegistry
 from src.providers.factory import ProviderFactory
 from src.providers.mock_provider import MockProvider
 from src.providers.openai_provider import OpenAIProvider
-from src.providers.gemini_provider import GeminiProvider
+from src.providers.groq_provider import GroqProvider
 from src.providers.ollama_provider import OllamaProvider
 
 
@@ -24,7 +24,7 @@ def test_provider_registry():
     providers = ProviderRegistry.list_providers()
     assert "mock" in providers
     assert "fireworks" in providers
-    assert "gemini" in providers
+    assert "groq" in providers
     assert "openai" in providers
     assert "ollama" in providers
 

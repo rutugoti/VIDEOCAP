@@ -224,6 +224,7 @@ def test_pipeline_validation_retry_flow(tmp_path):
 
 def test_fireworks_providers_mock_mode():
     """Verify that concrete Fireworks providers behave correctly under mock key environment."""
+    from unittest.mock import MagicMock
     api_key = "mock_key_for_testing"
     vision = FireworksVisionProvider(api_key=api_key)
     audio = FireworksAudioProvider(api_key=api_key)
@@ -233,6 +234,11 @@ def test_fireworks_providers_mock_mode():
     sample = Sample(frame_data=b"dummy_frame_jpeg", timestamp=2.0, sample_index=0, audio_segment=b"dummy_wav")
 
     # 1. Vision Provider
+    mock_chat_completion_vision = MagicMock()
+    mock_chat_completion_vision.choices = [
+        MagicMock(message=MagicMock(content='[{"content": "mocked fireworks vision obs", "confidence": 0.9, "observation_type": "scene"}]'))
+    ]
+    vision.client.chat.completions.create = MagicMock(return_value=mock_chat_completion_vision)
     vis_cfg = VisionConfig(provider="fireworks", model="accounts/fireworks/models/llava-v1.6")
     vis_obs = vision.analyze_frames([sample], "Describe what you see.", vis_cfg)
     assert len(vis_obs) > 0
@@ -240,6 +246,9 @@ def test_fireworks_providers_mock_mode():
     assert vis_obs[0].timestamp == 2.0
 
     # 2. Audio Provider
+    mock_audio_transcription = MagicMock()
+    mock_audio_transcription.text = "mocked fireworks audio transcription"
+    audio.client.audio.transcriptions.create = MagicMock(return_value=mock_audio_transcription)
     aud_cfg = AudioConfig(provider="fireworks", model="whisper-v3", language="en")
     aud_obs = audio.transcribe([sample], aud_cfg)
     assert len(aud_obs) > 0
@@ -247,6 +256,11 @@ def test_fireworks_providers_mock_mode():
     assert aud_obs[0].timestamp == 2.0
 
     # 3. OCR Provider
+    mock_chat_completion_ocr = MagicMock()
+    mock_chat_completion_ocr.choices = [
+        MagicMock(message=MagicMock(content='[{"text": "mocked fireworks ocr text", "confidence": 0.9}]'))
+    ]
+    ocr.client.chat.completions.create = MagicMock(return_value=mock_chat_completion_ocr)
     ocr_cfg = OCRConfig(provider="fireworks", model="accounts/fireworks/models/gemma-4-31b-it")
     ocr_obs = ocr.extract_text([sample], ocr_cfg)
     assert len(ocr_obs) > 0
@@ -254,6 +268,11 @@ def test_fireworks_providers_mock_mode():
     assert ocr_obs[0].timestamp == 2.0
 
     # 4. LLM Provider
+    mock_chat_completion_llm = MagicMock()
+    mock_chat_completion_llm.choices = [
+        MagicMock(message=MagicMock(content="Mocked Fireworks LLM response"))
+    ]
+    llm.client.chat.completions.create = MagicMock(return_value=mock_chat_completion_llm)
     llm_cfg = LLMConfig(provider="fireworks", model="accounts/fireworks/models/gemma-3-27b-it")
     response = llm.generate("State hello.", "You are a direct responder.", llm_cfg)
     assert isinstance(response, str)

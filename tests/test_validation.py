@@ -170,3 +170,21 @@ def test_validation_leakage_detected():
     assert report.per_caption["tech_humor"].style_adherence == 0.0
     assert report.per_caption["non_tech_humor"].style_adherence == 0.0
 
+
+def test_sarcastic_caption_no_narrative_terms_not_flagged():
+    narrative = Narrative(text="A person starts the coffee maker.", key_events=[], salience_scores={}, evidence_mapping={})
+    captions = {
+        "formal": Caption(text="A person starts the coffee maker.", style="formal", word_count=6),
+        "sarcastic": Caption(text="Oh fantastic, another video where events happen. Absolutely groundbreaking.", style="sarcastic", word_count=10),
+        "tech_humor": Caption(text="The coffee maker starts and processes caffeine.", style="tech_humor", word_count=7),
+        "non_tech_humor": Caption(text="Well, the coffee maker starts.", style="non_tech_humor", word_count=5)
+    }
+    mock_llm = MockLLMProvider()
+    validator = SemanticValidator(llm_provider=mock_llm)
+    report = validator.validate(captions, narrative)
+    
+    # "sarcastic" is missing "coffee" and "maker" which are present in the other 3, but should NOT be flagged as missing/contradiction.
+    assert report.per_caption["sarcastic"].passed is True
+    assert len(report.per_caption["sarcastic"].missing_facts) == 0
+
+

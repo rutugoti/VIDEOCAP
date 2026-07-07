@@ -7,6 +7,7 @@ from src.providers.base import (
     LLMProvider,
     ProviderCapabilities,
     ProviderConfig,
+    ProviderError,
     ValidationResult,
 )
 from src.providers.registry import ProviderRegistry
@@ -60,11 +61,11 @@ class LLMValidationProvider(ValidationProvider):
                 res = self.new_llm.generate(prompt, system_prompt, p_cfg)
                 return res.text
 
-        # Fallback to mock if no LLM provider is set
         llm_instance = self.llm_provider
         if not llm_instance:
-            from src.providers.mock_provider import MockProvider
-            llm_instance = MockProvider()
+            raise ProviderError(
+                "LLMValidationProvider requires an underlying LLM provider; none was configured."
+            )
 
         legacy_llm = LegacyLLMProviderAdapter(llm_instance)
         

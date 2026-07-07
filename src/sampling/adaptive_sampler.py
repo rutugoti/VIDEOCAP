@@ -354,6 +354,13 @@ class AdaptiveSampler:
                             if 0 <= closest_idx < num_samples:
                                 if frames_data[closest_idx] is None:
                                     img = frame.to_image()
+                                    # Scale down if width exceeds 600px to optimize API payloads
+                                    if img.width > 600:
+                                        import PIL.Image
+                                        new_width = 600
+                                        new_height = int(img.height * (new_width / img.width))
+                                        # Use standard LANCZOS resizing
+                                        img = img.resize((new_width, new_height), PIL.Image.Resampling.LANCZOS)
                                     buf = io.BytesIO()
                                     img.save(buf, format="JPEG")
                                     frames_data[closest_idx] = buf.getvalue()

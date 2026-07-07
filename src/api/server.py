@@ -222,34 +222,20 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
 
 def run_pipeline_thread(job_id: str, file_path: str):
     # Setup configuration
-    try:
-        config = get_config()
-        use_mocks = False
-    except ValueError:
-        # Fallback to offline mock mode if API key is not configured
-        os.environ["FIREWORKS_API_KEY"] = "mock_key_for_testing"
-        config = get_config()
-        use_mocks = True
+    config = get_config()
 
-    # Setup appropriate providers using Factory
-    if use_mocks:
-        vision_provs = "mock"
-        speech_provs = "mock"
-        ocr_provs = "mock"
-        llm_provs = "mock"
-        provider_name = "mock"
-    else:
-        vision_provs = config.models.vision.provider
-        speech_provs = config.models.speech.provider
-        ocr_provs = config.models.ocr.provider
-        llm_provs = config.models.llm.provider
-        provider_name = str(llm_provs)
+    vision_provs = config.models.vision.provider
+    speech_provs = config.models.speech.provider
+    ocr_provs = config.models.ocr.provider
+    llm_provs = config.models.llm.provider
+    provider_name = str(llm_provs)
 
     raw_vision = ProviderFactory.get_vision(vision_provs)
     raw_speech = ProviderFactory.get_speech(speech_provs)
     raw_ocr = ProviderFactory.get_ocr(ocr_provs)
     raw_llm = ProviderFactory.get_llm(llm_provs)
 
+    # Wrap in compatibility adapters for legacy pipeline code
     vision = LegacyVisionProviderAdapter(raw_vision)
     audio = LegacyAudioProviderAdapter(raw_speech)
     ocr = LegacyOCRProviderAdapter(raw_ocr)
@@ -266,7 +252,9 @@ def run_pipeline_thread(job_id: str, file_path: str):
 
     job_state = jobs_db[job_id]
     job_state["status"] = "running"
-    
+    job_state["provider"] = provider_name
+    job_state["degraded_to_mock"] = False
+
     start_time = time.time()
 
     def update_job(stage: str, status: str, **kwargs):

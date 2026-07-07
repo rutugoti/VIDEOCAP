@@ -141,7 +141,7 @@ class FireworksProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider
 
     PROVIDER_NAME = "fireworks"
 
-    def __init__(self, api_key: str = "mock_key_for_testing", base_url: Optional[str] = None):
+    def __init__(self, api_key: str, base_url: Optional[str] = None):
         self.api_key = api_key
         self.base_url = base_url or "https://api.fireworks.ai/inference/v1"
         self.client = OpenAI(api_key=api_key, base_url=self.base_url)
@@ -166,14 +166,6 @@ class FireworksProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider
     ) -> List[VisionObservation]:
         if not frames:
             return []
-
-        # If key is mock, bypass and return mock data for offline tests
-        if self.api_key == "mock_key_for_testing":
-            logger.info("Using mock vision provider response for testing key.")
-            # Delegate to standard mock
-            from src.providers.mock_provider import MockProvider
-            mock_inst = MockProvider()
-            return mock_inst.analyze_frames(frames, prompt, config)
 
         observations: List[VisionObservation] = []
 
@@ -294,12 +286,6 @@ class FireworksProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider
         if not frames:
             return []
 
-        if self.api_key == "mock_key_for_testing":
-            logger.info("Using mock audio provider response for testing key.")
-            from src.providers.mock_provider import MockProvider
-            mock_inst = MockProvider()
-            return mock_inst.transcribe(frames, config)
-
         observations: List[SpeechObservation] = []
 
         def _transcribe_single(frame: Any) -> Optional[SpeechObservation]:
@@ -359,12 +345,6 @@ class FireworksProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider
     ) -> List[OCRObservation]:
         if not frames:
             return []
-
-        if self.api_key == "mock_key_for_testing":
-            logger.info("Using mock OCR provider response for testing key.")
-            from src.providers.mock_provider import MockProvider
-            mock_inst = MockProvider()
-            return mock_inst.extract_text(frames, config)
 
         observations: List[OCRObservation] = []
 
@@ -483,11 +463,6 @@ class FireworksProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider
         system_prompt: str,
         config: ProviderConfig
     ) -> LLMResponse:
-        if self.api_key == "mock_key_for_testing":
-            from src.providers.mock_provider import MockProvider
-            mock_inst = MockProvider()
-            return mock_inst.generate(prompt, system_prompt, config)
-
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})

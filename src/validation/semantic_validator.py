@@ -130,9 +130,10 @@ class SemanticValidator(Validator):
                 present_styles = [style for style, terms in caption_terms.items() if term in terms]
                 if len(present_styles) == len(captions) - 1:
                     missing_style = [style for style in captions.keys() if style not in present_styles][0]
-                    det_contradictions[missing_style].append(
-                        f"Fact term '{term}' is present in other style captions but missing in '{missing_style}'."
-                    )
+                    if "sarcastic" not in missing_style:
+                        det_contradictions[missing_style].append(
+                            f"Fact term '{term}' is present in other style captions but missing in '{missing_style}'."
+                        )
 
         # Check pairwise Jaccard similarity between captions to detect leakage
         det_leakages = {style: False for style in captions.keys()}

@@ -6,8 +6,8 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-# Load environment variables from .env
-load_dotenv()
+# Load environment variables from .env, overriding any existing shell placeholders
+load_dotenv(override=True)
 
 # Root directory of the project
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
@@ -191,19 +191,10 @@ def setup_logging(config: SettingsConfig) -> None:
 
 def get_config() -> FullConfig:
     """Load, merge and validate all configurations."""
-    # Ensure at least one api key is set or mock/local is used
+    # Surfaced on FullConfig for callers that want the Fireworks key directly. Real
+    # key resolution/validation happens per-provider in ProviderFactory, which raises
+    # if no usable key is configured — there is no offline-mock fallback.
     fireworks_api_key = os.environ.get("FIREWORKS_API_KEY")
-    gemini_api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    openai_api_key = os.environ.get("OPENAI_API_KEY")
-    
-    # We only raise error if absolutely no keys are available and it is not mock/ollama
-    # However, to be fully backward-compatible with tests check:
-    # If no key is set and it's not run in offline/mock mode, we can default to a dummy key
-    # so we don't crash when importing/loading config in non-API scenarios.
-    if not any([fireworks_api_key, gemini_api_key, openai_api_key]):
-        # Default placeholder key for import-time stability
-        fireworks_api_key = "mock_key_for_testing"
-
 
     config_dir = ROOT_DIR / "configs"
 

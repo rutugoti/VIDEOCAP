@@ -115,3 +115,55 @@ def test_custom_exceptions():
 
     with pytest.raises(NoAudioError):
         raise NoAudioError("Missing audio track")
+
+
+def test_groq_provider():
+    from src.providers.registry import ProviderRegistry
+    from src.providers.factory import ProviderFactory
+    from src.providers.groq_provider import GroqProvider
+    from unittest.mock import MagicMock
+
+    # 1. Verify provider is auto-discovered and registered
+    groq_cls = ProviderRegistry.get("groq")
+    assert groq_cls == GroqProvider
+
+    # 2. Instantiate and verify capabilities
+    provider = GroqProvider(api_key="mock_key_for_testing")
+    assert provider.get_name() == "groq"
+    caps = provider.get_capabilities()
+    assert caps.supports_vision is True
+    assert caps.supports_json is True
+
+    # 3. Test execution path with mocked client completions API
+    from src.providers.base import ProviderConfig
+    config = ProviderConfig(provider_name="groq", model_name="llama-3.3-70b-versatile")
+    
+    # Mock LLM response
+    mock_chat_completion_llm = MagicMock()
+    mock_chat_completion_llm.choices = [
+        MagicMock(message=MagicMock(content="Mocked LLM content response"))
+    ]
+    mock_chat_completion_llm.usage = MagicMock(prompt_tokens=10, completion_tokens=20)
+
+    # Mock Vision response
+    mock_chat_completion_vision = MagicMock()
+    mock_chat_completion_vision.choices = [
+        MagicMock(message=MagicMock(content='[{"content": "mocked vision obs", "confidence": 0.9, "observation_type": "scene"}]'))
+    ]
+    mock_chat_completion_vision.usage = MagicMock(prompt_tokens=15, completion_tokens=25)
+
+    provider.client.chat.completions.create = MagicMock(side_effect=[
+        mock_chat_completion_llm,
+        mock_chat_completion_vision
+    ])
+
+    # Test LLM generate
+    response = provider.generate("test prompt", "test system", config)
+    assert response.text == "Mocked LLM content response"
+
+    # Test Vision analyze_frames
+    frames = [Sample(frame_data=b"f1", timestamp=0.0, sample_index=0)]
+    obs = provider.analyze_frames(frames, "test prompt", config)
+    assert len(obs) > 0
+    assert obs[0].content == "mocked vision obs"
+
