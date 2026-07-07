@@ -216,9 +216,9 @@ def test_pipeline_validation_retry_flow(tmp_path):
     captions = orchestrator.process_video(video_path)
     
     # Assert validation retried!
-    # Generator should have been called twice for each style because the first validation failed!
-    # With 4 styles, generator_calls should be 4 (first attempt) + 4 (second attempt) = 8
-    assert flaky_validator_llm.validation_calls == 8 # 4 styles * 2 attempts
+    # With cross-style validation, we validate all 4 styles at once.
+    # So validation_calls should be exactly 2 (one for the first failed attempt, one for the second successful attempt).
+    assert flaky_validator_llm.validation_calls == 2
     assert "formal" in captions
 
 
@@ -408,3 +408,29 @@ def test_simulated_judge_evaluation_suite(tmp_path):
     # The modular and validated MVP must score significantly higher than the unvalidated mixed-style baseline
     assert mvp_avg > baseline_avg
     assert mvp_avg >= 7.0
+
+
+def test_pipeline_ejr_generation(tmp_path):
+    video_path = str(tmp_path / "ejr_test.mp4")
+    create_test_dummy_video(video_path, duration=3.0, has_audio=True)
+
+    config = get_config()
+    orchestrator = PipelineOrchestrator(
+        config=config,
+        llm_provider=MockLLMProvider(),
+        vision_provider=MockVisionProvider(),
+        audio_provider=MockAudioProvider(),
+        ocr_provider=MockOCRProvider(),
+    )
+
+    captions = orchestrator.process_video(video_path)
+    
+    # Check that ejr is present in all captions metadata and is formatted correctly
+    for style, cap in captions.items():
+        assert "ejr" in cap.metadata
+        ejr = cap.metadata["ejr"]
+        assert "| Event Description | Time Window | Evidence Sources |" in ejr
+        assert "No conflicts" in ejr or "conflict" in ejr.lower() or "agreement" in ejr.lower()
+        # Verify that duplication has been removed
+        assert "events_used" not in cap.metadata
+        assert "observations_used" not in cap.metadata

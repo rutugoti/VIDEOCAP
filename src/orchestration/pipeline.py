@@ -78,7 +78,12 @@ class PipelineOrchestrator:
             method=sampling_cfg.method,
             fps=sampling_cfg.fps,
             max_frames=sampling_cfg.max_frames,
-            min_frames=sampling_cfg.min_frames
+            min_frames=sampling_cfg.min_frames,
+            baseline_fps=getattr(sampling_cfg, "baseline_fps", 1.0),
+            min_scene_duration=getattr(sampling_cfg, "min_scene_duration", 1.0),
+            motion_threshold=getattr(sampling_cfg, "motion_threshold", 15.0),
+            scene_change_threshold=getattr(sampling_cfg, "scene_change_threshold", 20.0),
+            silence_threshold=getattr(sampling_cfg, "silence_threshold", -40.0)
         )
 
         # 4. Initialize Perception Processors
@@ -129,10 +134,23 @@ class PipelineOrchestrator:
             llm_provider=self.llm_provider,
             llm_config=fusion_llm_cfg,
             temporal_window_seconds=fusion_cfg.temporal_window_seconds,
-            min_confidence=fusion_cfg.min_confidence
+            min_confidence=fusion_cfg.min_confidence,
+            escalate_conflict_min_conf=self.config.pipeline.evidence_policy.escalate_conflict_min_conf
         )
 
-        self.graph_builder = SemanticGraphBuilder()
+        graph_cfg = self.config.pipeline.graph
+        graph_llm_cfg = LLMConfig(
+            provider=self.config.models.llm.provider,
+            model=self.config.models.llm.model,
+            max_tokens=256,
+            temperature=0.1
+        )
+        self.graph_builder = SemanticGraphBuilder(
+            llm_provider=self.llm_provider,
+            llm_config=graph_llm_cfg,
+            causal_edges=graph_cfg.causal_edges,
+            causal_window_seconds=graph_cfg.causal_window_seconds,
+        )
 
         narrative_cfg = self.config.pipeline.narrative
         narrative_llm_cfg = LLMConfig(
@@ -145,7 +163,8 @@ class PipelineOrchestrator:
             llm_provider=self.llm_provider,
             llm_config=narrative_llm_cfg,
             max_events=narrative_cfg.max_events,
-            max_words=narrative_cfg.max_words
+            max_words=narrative_cfg.max_words,
+            consume_edges=narrative_cfg.consume_edges
         )
 
         generation_cfg = self.config.pipeline.generation
@@ -162,7 +181,9 @@ class PipelineOrchestrator:
             llm_config=gen_llm_cfg,
             prompts_dir=prompts_dir,
             min_caption_words=generation_cfg.min_caption_words,
-            max_caption_words=generation_cfg.max_caption_words
+            max_caption_words=generation_cfg.max_caption_words,
+            single_pass=generation_cfg.single_pass,
+            style_separation_min=generation_cfg.style_separation_min
         )
 
         # 6. Initialize Validator and Formatter
@@ -179,7 +200,8 @@ class PipelineOrchestrator:
             prompts_dir=prompts_dir,
             hallucination_check=val_cfg.hallucination_check,
             style_leakage_check=val_cfg.style_leakage_check,
-            fact_drift_check=val_cfg.fact_drift_check
+            fact_drift_check=val_cfg.fact_drift_check,
+            unsupported_claim_check=val_cfg.unsupported_claim_check
         )
 
         self.submission_formatter = SubmissionFormatter()
@@ -319,11 +341,13 @@ class PipelineOrchestrator:
                 logger.info("Running SemanticValidator checks...")
                 report = self.validator.validate(captions, narrative)
                 
-                # Enrich metadata with validation and input context for explainability
+                # Build one centralized Evidence Justification Record (EJR)
+                ejr_markdown = self.build_ejr(events, observations)
+
+                # Enrich metadata with validation and EJR context for explainability without duplicating observations
                 for style, cap in captions.items():
                     cap.metadata["narrative"] = narrative.text
-                    cap.metadata["events_used"] = [e.model_dump() for e in events]
-                    cap.metadata["observations_used"] = [o.model_dump() for o in observations]
+                    cap.metadata["ejr"] = ejr_markdown
                     if style in report.per_caption:
                         cap.metadata["validation_result"] = report.per_caption[style].model_dump()
 
@@ -344,16 +368,63 @@ class PipelineOrchestrator:
                             f"Hallucinations: {report.hallucination_count}, consistency score: {report.consistency_score}"
                         )
             else:
-                # Still enrich basic narrative/event explainability when validation is disabled
+                ejr_markdown = self.build_ejr(events, observations)
+                # Still enrich basic narrative/EJR explainability when validation is disabled
                 for style, cap in captions.items():
                     cap.metadata["narrative"] = narrative.text
-                    cap.metadata["events_used"] = [e.model_dump() for e in events]
-                    cap.metadata["observations_used"] = [o.model_dump() for o in observations]
+                    cap.metadata["ejr"] = ejr_markdown
                 break
 
         logger.info(f"Generation/Validation stage latency: {time.time() - t0:.2f}s")
         logger.info(f"Pipeline orchestration successfully completed. Total Latency: {time.time() - pipeline_start:.2f}s")
         return captions
+
+    def build_ejr(self, events: List[Event], observations: List[Observation]) -> str:
+        """
+        Build a centralized Evidence Justification Record (EJR) as a markdown table.
+        """
+        lines = [
+            "| Event Description | Time Window | Evidence Sources | Confidence | Conflict Resolution Summary |",
+            "| :--- | :--- | :--- | :--- | :--- |"
+        ]
+        
+        for e in events:
+            # Gather conflict resolution notes for observations in this event's window
+            resolution_notes = []
+            
+            # Find any conflicts in self.fusion_engine.all_conflicts
+            conflicts = getattr(self.fusion_engine, "all_conflicts", [])
+            for c in conflicts:
+                is_relevant = False
+                c_type = c.get("type")
+                if c_type in ("ocr_downweighted", "audio_only_downweighted"):
+                    obs_content = c.get("observation", "")
+                    for o in observations:
+                        if o.content == obs_content and e.timestamp_start - 0.5 <= o.timestamp <= e.timestamp_end + 0.5:
+                            is_relevant = True
+                            break
+                elif c_type in ("modality_agreement", "modality_contradiction"):
+                    v_content = c.get("visual", "")
+                    a_content = c.get("audio", "")
+                    for o in observations:
+                        if o.content in (v_content, a_content) and e.timestamp_start - 0.5 <= o.timestamp <= e.timestamp_end + 0.5:
+                            is_relevant = True
+                            break
+                
+                if is_relevant:
+                    res_str = c.get("resolution", "")
+                    if c_type == "modality_contradiction" and c.get("escalate_to_llm"):
+                        verdict = c.get("gemma_verdict")
+                        if verdict:
+                            res_str += f" (Gemma resolved: {verdict.get('resolution')})"
+                    resolution_notes.append(f"{c_type}: {res_str}")
+            
+            notes_str = "; ".join(set(resolution_notes)) if resolution_notes else "No conflicts"
+            sources = ", ".join(e.evidence_sources)
+            time_win = f"{e.timestamp_start:.2f}s - {e.timestamp_end:.2f}s"
+            lines.append(f"| {e.description} | {time_win} | {sources} | {e.confidence:.2f} | {notes_str} |")
+            
+        return "\n".join(lines)
 
     def process_batch(self, video_paths: List[str], output_path: str) -> List[Dict[str, str]]:
         """

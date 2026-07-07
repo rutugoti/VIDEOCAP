@@ -41,4 +41,12 @@ class TimelineBuilder:
             modalities_present=modalities_present
         )
 
+        # Assign stable ascending ids in chronological order so downstream stages
+        # (EvidenceResolutionPolicy contested-pair alternatives, Event provenance
+        # back-links) can reference observations. Without this, `Observation.id`
+        # stays None and alternative cross-references are silently dropped.
+        for idx, obs in enumerate(timeline.observations):
+            if obs.id is None:
+                obs.id = idx
+
         return timeline

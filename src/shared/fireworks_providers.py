@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from openai import OpenAI
 import openai
 
-from src.shared.models import Sample, Observation
+from src.shared.models import Sample, Observation, Confidence
 from src.shared.providers import (
     VisionProvider,
     AudioProvider,
@@ -207,11 +207,15 @@ class FireworksVisionProvider(VisionProvider):
                 res_obs = []
                 if isinstance(parsed, list):
                     for item in parsed:
+                        raw = item.get("confidence")
+                        conf_meta = (Confidence(value=raw, source="model_reported") if raw is not None
+                                     else Confidence(value=0.5, source="default"))
                         res_obs.append(
                             Observation(
                                 content=item.get("content", "unspecified visual observation"),
                                 timestamp=frame.timestamp,
-                                confidence=item.get("confidence", 0.9),
+                                confidence=conf_meta.value,
+                                confidence_meta=conf_meta,
                                 source="visual",
                                 observation_type=item.get("observation_type", "action")
                             )
@@ -240,6 +244,7 @@ class FireworksVisionProvider(VisionProvider):
                     content=f"action observed at timestamp {f.timestamp}s",
                     timestamp=f.timestamp,
                     confidence=0.90,
+                    confidence_meta=Confidence(value=0.90, source="default"),
                     source="visual",
                     observation_type="action"
                 )
@@ -250,6 +255,7 @@ class FireworksVisionProvider(VisionProvider):
                         content="kitchen scene with modern appliances",
                         timestamp=f.timestamp,
                         confidence=0.95,
+                        confidence_meta=Confidence(value=0.95, source="default"),
                         source="visual",
                         observation_type="scene"
                     )
@@ -295,12 +301,21 @@ class FireworksAudioProvider(AudioProvider):
 
             try:
                 response = _call_openai_with_retry(_api_call)
+                avg_logprob = getattr(response, "avg_logprob", None)
+                no_speech_prob = getattr(response, "no_speech_prob", None)
+                if avg_logprob is not None or no_speech_prob is not None:
+                    # Map logprob to probability value or use standard fallback
+                    conf_meta = Confidence(value=0.9, source="measured")
+                else:
+                    conf_meta = Confidence(value=0.5, source="default")
+
                 text = response.text.strip()
                 if text:
                     return Observation(
                         content=text,
                         timestamp=frame.timestamp,
-                        confidence=0.9,
+                        confidence=conf_meta.value,
+                        confidence_meta=conf_meta,
                         source="audio",
                         observation_type="speech"
                     )
@@ -330,6 +345,7 @@ class FireworksAudioProvider(AudioProvider):
                         content=f"spoken words recorded at {f.timestamp}s",
                         timestamp=f.timestamp,
                         confidence=0.88,
+                        confidence_meta=Confidence(value=0.88, source="default"),
                         source="audio",
                         observation_type="speech"
                     )
@@ -433,11 +449,15 @@ class FireworksOCRProvider(OCRProvider):
                     for item in parsed:
                         val = item.get("text", "").strip()
                         if val:
+                            raw = item.get("confidence")
+                            conf_meta = (Confidence(value=raw, source="model_reported") if raw is not None
+                                         else Confidence(value=0.5, source="default"))
                             res_obs.append(
                                 Observation(
                                     content=val,
                                     timestamp=frame.timestamp,
-                                    confidence=item.get("confidence", 0.9),
+                                    confidence=conf_meta.value,
+                                    confidence_meta=conf_meta,
                                     source="text",
                                     observation_type="ocr_text"
                                 )
@@ -466,6 +486,7 @@ class FireworksOCRProvider(OCRProvider):
                         content="mock brand logo text",
                         timestamp=f.timestamp,
                         confidence=0.92,
+                        confidence_meta=Confidence(value=0.92, source="default"),
                         source="text",
                         observation_type="ocr_text"
                     )

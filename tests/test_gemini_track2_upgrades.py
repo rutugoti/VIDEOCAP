@@ -89,9 +89,9 @@ class MockLLMForGenerator(LLMProvider):
 def test_generator_self_critique_and_trimming():
     llm = MockLLMForGenerator()
     config = LLMConfig(provider="mock", model="mock-model", max_tokens=100)
-    generator = StyleGenerator(llm_provider=llm, llm_config=config, min_caption_words=5, max_caption_words=20)
+    generator = StyleGenerator(llm_provider=llm, llm_config=config, min_caption_words=5, max_caption_words=20, single_pass=False)
     
-    narrative = Narrative(text="A user opens a laptop and starts coding.", key_events=[], salience_scores={})
+    narrative = Narrative(text="A user opens a laptop and starts coding.", key_events=[], salience_scores={}, evidence_mapping={})
     captions = generator.generate_captions(narrative)
     
     # We should have all four styles

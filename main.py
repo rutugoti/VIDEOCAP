@@ -5,17 +5,12 @@ import logging
 
 from src.config.settings import get_config
 from src.orchestration.pipeline import PipelineOrchestrator
-from src.shared.fireworks_providers import (
-    FireworksVisionProvider,
-    FireworksAudioProvider,
-    FireworksOCRProvider,
-    FireworksLLMProvider,
-)
+from src.providers.factory import ProviderFactory
 from src.shared.providers import (
-    MockVisionProvider,
-    MockAudioProvider,
-    MockOCRProvider,
-    MockLLMProvider,
+    LegacyVisionProviderAdapter,
+    LegacyAudioProviderAdapter,
+    LegacyOCRProviderAdapter,
+    LegacyLLMProviderAdapter,
 )
 
 logger = logging.getLogger("video_captioner_cli")
@@ -64,19 +59,28 @@ def main():
         config = get_config()
 
     # Setup appropriate providers
-    if args.use_mocks or config.fireworks_api_key == "mock_key_for_testing":
-        print("Initializing pipeline with Mock Offline Providers...")
-        vision = MockVisionProvider()
-        audio = MockAudioProvider()
-        ocr = MockOCRProvider()
-        llm = MockLLMProvider()
+    if args.use_mocks:
+        vision_provs = "mock"
+        speech_provs = "mock"
+        ocr_provs = "mock"
+        llm_provs = "mock"
     else:
-        print("Initializing pipeline with Live Fireworks API Providers...")
-        api_key = config.fireworks_api_key
-        vision = FireworksVisionProvider(api_key=api_key)
-        audio = FireworksAudioProvider(api_key=api_key)
-        ocr = FireworksOCRProvider(api_key=api_key)
-        llm = FireworksLLMProvider(api_key=api_key)
+        vision_provs = config.models.vision.provider
+        speech_provs = config.models.speech.provider
+        ocr_provs = config.models.ocr.provider
+        llm_provs = config.models.llm.provider
+
+    print(f"Initializing providers via Factory...")
+    raw_vision = ProviderFactory.get_vision(vision_provs)
+    raw_speech = ProviderFactory.get_speech(speech_provs)
+    raw_ocr = ProviderFactory.get_ocr(ocr_provs)
+    raw_llm = ProviderFactory.get_llm(llm_provs)
+
+    # Wrap in compatibility adapters for legacy pipeline code
+    vision = LegacyVisionProviderAdapter(raw_vision)
+    audio = LegacyAudioProviderAdapter(raw_speech)
+    ocr = LegacyOCRProviderAdapter(raw_ocr)
+    llm = LegacyLLMProviderAdapter(raw_llm)
 
     # Initialize the orchestrator
     orchestrator = PipelineOrchestrator(

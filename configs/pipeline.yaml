@@ -1,13 +1,21 @@
 # Pipeline execution configuration
 sampling:
-  method: "uniform"  # uniform | adaptive
+  method: "adaptive"  # uniform | adaptive | scene_change | hybrid
   fps: 1.0           # frames per second
   max_frames: 30
   min_frames: 5
+  baseline_fps: 1.0
+  min_scene_duration: 1.0
+  motion_threshold: 15.0
+  scene_change_threshold: 20.0
+  silence_threshold: -40.0 # dB
+  adaptive_sampling_limits:
+    max_samples: 30
+    min_samples: 5
 
 perception:
   parallel: true
-  timeout_seconds: 30
+  timeout_seconds: 180
   max_workers: 3
   vision:
     enabled: true
@@ -20,9 +28,16 @@ fusion:
   min_confidence: 0.3
   temporal_window_seconds: 2.0
 
+graph:
+  causal_edges: false
+  causal_window_seconds: 4.0
+  edge_weight_threshold: 0.3
+  max_edges_to_narrative: 20
+
 narrative:
   max_events: 10
   max_words: 100
+  consume_edges: true
 
 generation:
   styles:
@@ -32,6 +47,11 @@ generation:
     - non_tech_humor
   max_caption_words: 35
   min_caption_words: 10
+  single_pass: true
+  style_separation_min: 0.5
+
+evidence_policy:
+  escalate_conflict_min_conf: 0.7
 
 validation:
   enabled: true
@@ -40,3 +60,4 @@ validation:
   fact_drift_check: true
   retry_on_failure: true
   max_retries: 2
+  unsupported_claim_check: false  # P4.1 (Nice-to-Have): entailment check, off by default

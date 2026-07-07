@@ -35,6 +35,12 @@ def test_mock_vision_provider():
     scenes = [o for o in obs if o.observation_type == "scene"]
     assert len(scenes) == 1
     assert "kitchen" in scenes[0].content
+    
+    # Check confidence_meta
+    for o in obs:
+        assert o.confidence_meta is not None
+        assert o.confidence_meta.source == "default"
+        assert o.confidence_meta.value in (0.90, 0.95)
 
 
 def test_mock_audio_provider():
@@ -50,6 +56,9 @@ def test_mock_audio_provider():
     assert len(obs) == 1
     assert obs[0].source == "audio"
     assert obs[0].timestamp == 1.0
+    assert obs[0].confidence_meta is not None
+    assert obs[0].confidence_meta.source == "default"
+    assert obs[0].confidence_meta.value == 0.88
 
 
 def test_mock_ocr_provider():
@@ -66,6 +75,9 @@ def test_mock_ocr_provider():
     assert len(obs) == 1
     assert obs[0].source == "text"
     assert obs[0].timestamp == 1.0
+    assert obs[0].confidence_meta is not None
+    assert obs[0].confidence_meta.source == "default"
+    assert obs[0].confidence_meta.value == 0.92
 
 
 def test_mock_llm_provider():

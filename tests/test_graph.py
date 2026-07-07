@@ -124,3 +124,46 @@ def test_causal_heuristics():
     assert len(causal_edges) == 1
     assert causal_edges[0].source == "ev1"
     assert causal_edges[0].target == "ev2"
+
+
+def test_edge_weight_ranking():
+    # ev1: person enters kitchen (salience: 0.5)
+    ev1 = Event(
+        description="person enters kitchen because of hunger",
+        actors=["person"],
+        actions=["enters"],
+        objects=["kitchen"],
+        timestamp_start=0.0,
+        timestamp_end=1.0,
+        confidence=1.0,
+        evidence_sources=["visual"],
+        salience=0.5
+    )
+    # ev2: coffee maker triggers steam (salience: 0.9)
+    ev2 = Event(
+        description="coffee maker triggers steam",
+        actors=["coffee"],
+        actions=["triggers"],
+        objects=["steam"],
+        timestamp_start=1.0,
+        timestamp_end=2.0,
+        confidence=1.0,
+        evidence_sources=["visual"],
+        salience=0.9
+    )
+
+    builder = SemanticGraphBuilder()
+    graph = builder.build_graph([ev1, ev2])
+
+    # Find the causal edge and the participates_in edge
+    causal_edge = next(e for e in graph.edges if e.relationship == "causal")
+    part_edge = next(e for e in graph.edges if e.relationship == "participates_in" and e.source == "person")
+
+    # Assert that causal edge weight outranks participates_in edge weight
+    # Causal type prior is 1.0; participates_in is 0.3.
+    # Node saliences: ev1=0.5, ev2=0.9, person=0.5, kitchen=0.5, coffee=0.5, steam=0.5 (defaults)
+    # Causal: source="ev1", target="ev2", s=(0.5+0.9)/2 = 0.7. Weight = 1.0 * 1.0 * 0.7 = 0.7
+    # Part_edge: source="person", target="ev1", s=(0.5+0.5)/2 = 0.5. Weight = 0.3 * 1.0 * 0.5 = 0.15
+    assert causal_edge.weight > part_edge.weight
+    assert causal_edge.weight == 0.7
+    assert part_edge.weight == 0.15

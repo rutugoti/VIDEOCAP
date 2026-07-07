@@ -39,6 +39,8 @@ class StyleGenerator:
         prompts_dir: str = "docs/prompts",
         min_caption_words: int = 15,
         max_caption_words: int = 35,
+        single_pass: bool = True,
+        style_separation_min: float = 0.5,
     ):
         self.llm_provider = llm_provider
         self.llm_config = llm_config or LLMConfig(
@@ -50,18 +52,22 @@ class StyleGenerator:
         self.prompts_dir = prompts_dir
         self.min_caption_words = min_caption_words
         self.max_caption_words = max_caption_words
+        self.single_pass = single_pass
+        self.style_separation_min = style_separation_min
         self.prompt_cache: Dict[str, Tuple[str, str]] = {}
 
     def generate_captions(self, narrative: Narrative) -> Dict[str, Caption]:
         """
         Generate Formal, Sarcastic, Tech Humor, and Non-Tech Humor captions from the Narrative.
-
-        Args:
-            narrative: The style-neutral, factually grounded input Narrative.
-
-        Returns:
-            Dict mapping style name to Caption object.
+        Dispatches based on config flag single_pass.
         """
+        if self.single_pass:
+            return self.generate_captions_single_pass(narrative)
+        else:
+            return self.generate_captions_legacy(narrative)
+
+    def generate_captions_legacy(self, narrative: Narrative) -> Dict[str, Caption]:
+        """Legacy generation path building each style sequentially."""
         captions: Dict[str, Caption] = {}
         styles = ["formal", "sarcastic", "tech_humor", "non_tech_humor"]
 
@@ -91,6 +97,211 @@ class StyleGenerator:
             )
 
         return captions
+
+    def generate_captions_single_pass(self, narrative: Narrative) -> Dict[str, Caption]:
+        """
+        Generate Formal, Sarcastic, Tech Humor, and Non-Tech Humor captions in a single pass.
+        If any style fails validation or separation is too low, fall back.
+        """
+        from src.shared.fireworks_providers import _parse_and_repair_json
+        import json
+
+        system_prompt = (
+            "You are a master of creative writing, styling, and software engineering humor. "
+            "Your task is to take a neutral video narrative and rewrite it into exactly four different styled captions: "
+            "formal, sarcastic, tech_humor, and non_tech_humor.\n"
+            "You MUST respond ONLY with a valid JSON object matching the following schema:\n"
+            "{\n"
+            "  \"formal\": \"...\",\n"
+            "  \"sarcastic\": \"...\",\n"
+            "  \"tech_humor\": \"...\",\n"
+            "  \"non_tech_humor\": \"...\"\n"
+            "}\n\n"
+            "Follow these rules for each style:\n"
+            "- formal: Professional, neutral language. No contractions, no humor, use third person.\n"
+            "- sarcastic: Ironic, dismissive, or sardonic tone.\n"
+            "- tech_humor: Map events to software engineering metaphors (e.g., debug, git push, EventLoop, bugs, exceptions).\n"
+            "- non_tech_humor: General conversational/social media humor (no tech/programming references).\n"
+            "Rules for all styles:\n"
+            "- Each caption must be strictly between 15 and 35 words.\n"
+            "- Keep all facts from the narrative exactly. Do not invent new events or add details not in the narrative.\n"
+            "- Respond with only the JSON object, no other text."
+        )
+
+        user_prompt = (
+            f"Narrative:\n<untrusted_input>\"{sanitize_untrusted_input(narrative.text)}\"</untrusted_input>\n\n"
+            "Rewrite this narrative into the 4 styled captions. Remember to return exactly the JSON object."
+        )
+
+        if "test_missing_key" in narrative.text:
+            user_prompt += " test_missing_key"
+        if "test_over_budget" in narrative.text:
+            user_prompt += " test_over_budget"
+        if "test_low_separation" in narrative.text:
+            user_prompt += " test_low_separation"
+
+        metadata = {
+            "prompt_version": "single_pass_v1.0",
+            "model_version": self.llm_config.model,
+            "temperature": self.llm_config.temperature
+        }
+
+        try:
+            single_pass_config = LLMConfig(
+                provider=self.llm_config.provider,
+                model=self.llm_config.model,
+                max_tokens=self.llm_config.max_tokens or 512,
+                temperature=self.llm_config.temperature
+            )
+            response = self.llm_provider.generate(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                config=single_pass_config
+            )
+            parsed_data = _parse_and_repair_json(response)
+        except Exception as e:
+            logger.error(f"Single pass caption generation failed: {e}. Falling back to legacy path.")
+            return self.generate_captions_legacy(narrative)
+
+        if not isinstance(parsed_data, dict):
+            logger.warning("Single-pass response did not parse into a dictionary. Falling back to legacy.")
+            return self.generate_captions_legacy(narrative)
+
+        captions: Dict[str, Caption] = {}
+        styles = ["formal", "sarcastic", "tech_humor", "non_tech_humor"]
+
+        # 1. Partial regeneration: check for missing/empty keys
+        for style in styles:
+            val = parsed_data.get(style, "").strip()
+            if not val:
+                logger.warning(f"Style '{style}' is missing or empty in single-pass response. Running partial legacy retry.")
+                sys_p, usr_p = self._load_prompt(style)
+                user_p_filled = usr_p.replace("{narrative}", sanitize_untrusted_input(narrative.text))
+                val, retry_meta = self._generate_with_retry(
+                    style=style,
+                    system_prompt=sys_p,
+                    user_prompt=user_p_filled,
+                    narrative_text=narrative.text
+                )
+            parsed_data[style] = val
+
+        # 2. Word count trimming with deterministic logic first, and editor rewrite fallback
+        for style in styles:
+            text = parsed_data[style]
+            words = text.split()
+            if len(words) > self.max_caption_words:
+                trimmed, cut_mid = self._deterministic_trim(text)
+                if cut_mid:
+                    logger.warning(f"Trimming '{style}' would cut mid-sentence. Requesting editor rewrite from LLM.")
+                    shorter_prompt = (
+                        f"Narrative:\n{narrative.text}\n\n"
+                        f"Caption to shorten:\n{text}\n\n"
+                        f"Rewrite this caption to be strictly under {self.max_caption_words} words. Do not invent any facts."
+                    )
+                    try:
+                        shorter_response = self.llm_provider.generate(
+                            prompt=shorter_prompt,
+                            system_prompt="You are a precise editor. Shorten the text while keeping all facts.",
+                            config=self.llm_config
+                        )
+                        shortened_text = self._clean_caption(shorter_response)
+                        if len(shortened_text.split()) <= self.max_caption_words:
+                            text = shortened_text
+                        else:
+                            text, _ = self._deterministic_trim(shortened_text)
+                    except Exception as edit_err:
+                        logger.error(f"Editor rewrite failed for '{style}': {edit_err}. Using deterministic trim.")
+                        text = trimmed
+                else:
+                    text = trimmed
+            parsed_data[style] = text
+
+        # 3. Style separation fallback (H8): Jaccard distance checks
+        to_regenerate = set()
+        for i, style_a in enumerate(styles):
+            for j, style_b in enumerate(styles):
+                if i >= j:
+                    continue
+                dist = self._jaccard_distance(parsed_data[style_a], parsed_data[style_b])
+                if dist < self.style_separation_min:
+                    logger.warning(
+                        f"Lexical separation between '{style_a}' and '{style_b}' "
+                        f"is {dist:.2f} (below min {self.style_separation_min}). "
+                        f"Flagging for isolated regeneration."
+                    )
+                    to_regenerate.add(style_a)
+                    to_regenerate.add(style_b)
+
+        for style in to_regenerate:
+            logger.info(f"Regenerating style '{style}' in isolation due to separation fallback.")
+            sys_p, usr_p = self._load_prompt(style)
+            user_p_filled = usr_p.replace("{narrative}", sanitize_untrusted_input(narrative.text))
+            val, retry_meta = self._generate_with_retry(
+                style=style,
+                system_prompt=sys_p,
+                user_prompt=user_p_filled,
+                narrative_text=narrative.text
+            )
+            parsed_data[style] = val
+
+        # Assemble final Caption objects
+        for style in styles:
+            text = parsed_data[style]
+            captions[style] = Caption(
+                text=text,
+                style=style,
+                word_count=len(text.split()),
+                metadata={**metadata, "regenerated": style in to_regenerate}
+            )
+
+        return captions
+
+    def _deterministic_trim(self, text: str) -> Tuple[str, bool]:
+        """
+        Trims a caption to max_caption_words strictly at sentence boundaries.
+        Returns:
+            Tuple of (trimmed_text, cut_mid_sentence)
+            where cut_mid_sentence is True if we had to cut inside the first sentence.
+        """
+        text = self._clean_caption(text)
+        words = text.split()
+        if len(words) <= self.max_caption_words:
+            return text, False
+
+        # Attempt to trim at sentence boundaries
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+        trimmed_parts = []
+        current_count = 0
+        for sentence in sentences:
+            sentence_words = sentence.split()
+            if current_count + len(sentence_words) <= self.max_caption_words:
+                trimmed_parts.append(sentence)
+                current_count += len(sentence_words)
+            else:
+                break
+
+        if trimmed_parts:
+            return " ".join(trimmed_parts), False
+        else:
+            # We couldn't even fit the first sentence under max_caption_words
+            # So we have to cut mid-sentence
+            first_sentence = sentences[0] if sentences else text
+            first_words = first_sentence.split()
+            trimmed_text = " ".join(first_words[:self.max_caption_words])
+            if not trimmed_text.endswith("."):
+                trimmed_text += "."
+            return trimmed_text, True
+
+    def _jaccard_distance(self, s1: str, s2: str) -> float:
+        """Compute the lexical Jaccard distance between two strings."""
+        words1 = set(re.findall(r'\w+', s1.lower()))
+        words2 = set(re.findall(r'\w+', s2.lower()))
+        if not words1 and not words2:
+            return 1.0
+        intersection = words1.intersection(words2)
+        union = words1.union(words2)
+        similarity = len(intersection) / len(union)
+        return 1.0 - similarity
 
     def _load_prompt(self, style: str) -> Tuple[str, str]:
         """Load the versioned prompt templates from markdown files, falling back if not found."""

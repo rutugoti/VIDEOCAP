@@ -135,3 +135,38 @@ User template for {narrative} and {style} and {caption}.
 
     assert sys_p == "System validator prompt."
     assert usr_p == "User template for {narrative} and {style} and {caption}."
+
+
+def test_validation_contradiction_detected():
+    narrative = Narrative(text="A person starts the coffee maker.", key_events=[], salience_scores={}, evidence_mapping={})
+    captions = {
+        "formal": Caption(text="A person starts the coffee maker.", style="formal", word_count=6),
+        "sarcastic": Caption(text="Oh great, the coffee maker is starting.", style="sarcastic", word_count=7),
+        "tech_humor": Caption(text="The coffee maker starts and processes caffeine.", style="tech_humor", word_count=7),
+        "non_tech_humor": Caption(text="Something starts.", style="non_tech_humor", word_count=2) # missing "coffee" and "maker"
+    }
+    mock_llm = MockLLMProvider()
+    validator = SemanticValidator(llm_provider=mock_llm)
+    report = validator.validate(captions, narrative)
+    
+    # "non_tech_humor" style misses the key terms "coffee" and "maker" which are present in the other 3.
+    # It should be flagged as contradiction and its passed field should be False.
+    assert report.per_caption["non_tech_humor"].passed is False
+    assert any("coffee" in fact or "maker" in fact for fact in report.per_caption["non_tech_humor"].missing_facts)
+
+
+def test_validation_leakage_detected():
+    narrative = Narrative(text="A person starts the coffee maker.", key_events=[], salience_scores={}, evidence_mapping={})
+    captions = {
+        "tech_humor": Caption(text="A funny joke about coffee maker starting.", style="tech_humor", word_count=7),
+        "non_tech_humor": Caption(text="A funny joke about coffee maker starting.", style="non_tech_humor", word_count=7) # duplicate/high similarity (Jaccard = 1.0)
+    }
+    mock_llm = MockLLMProvider()
+    validator = SemanticValidator(llm_provider=mock_llm)
+    report = validator.validate(captions, narrative)
+    
+    assert report.per_caption["tech_humor"].passed is False
+    assert report.per_caption["non_tech_humor"].passed is False
+    assert report.per_caption["tech_humor"].style_adherence == 0.0
+    assert report.per_caption["non_tech_humor"].style_adherence == 0.0
+

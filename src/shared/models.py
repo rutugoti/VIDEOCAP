@@ -2,6 +2,11 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
+class Confidence(BaseModel):
+    value: float = Field(..., ge=0.0, le=1.0)
+    source: Literal["measured", "model_reported", "default", "calibrated", "unknown"] = "default"
+
+
 class VideoDescriptor(BaseModel):
     """Represents metadata of a video loaded into the system."""
     path: str
@@ -36,6 +41,10 @@ class Observation(BaseModel):
     confidence: float = Field(..., ge=0.0, le=1.0)
     source: Literal["visual", "audio", "text"]
     observation_type: str  # object, action, scene, speech, ocr_text, emotion, sound
+    id: Optional[int] = None
+    confidence_meta: Optional[Confidence] = None
+    contested: bool = False
+    alternatives: List[int] = Field(default_factory=list)
 
     @field_validator("content")
     @classmethod
@@ -56,6 +65,9 @@ class Event(BaseModel):
     confidence: float = Field(..., ge=0.0, le=1.0)
     evidence_sources: List[str] = Field(default_factory=list)
     salience: float = Field(..., ge=0.0, le=1.0)
+    source_observation_ids: List[int] = Field(default_factory=list)
+    contested: bool = False
+    alternatives: List[str] = Field(default_factory=list)
 
     @field_validator("timestamp_end")
     @classmethod
@@ -90,7 +102,10 @@ class GraphEdge(BaseModel):
     """A directed relationship edge in the semantic graph."""
     source: str
     target: str
-    relationship: Literal["temporal", "causal", "spatial", "participates_in"]
+    relationship: Literal["temporal", "causal", "spatial", "participates_in", "enables"]
+    confidence: float = Field(1.0, ge=0.0, le=1.0)
+    weight: float = Field(0.0, ge=0.0)
+    evidence: Optional[str] = None
 
 
 class SemanticGraph(BaseModel):

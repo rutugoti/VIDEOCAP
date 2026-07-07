@@ -5,6 +5,7 @@ from typing import List, Optional
 from src.shared.models import Timeline, Event, Observation
 from src.shared.providers import LLMProvider, LLMConfig, ProviderError
 from src.shared.utils import sanitize_untrusted_input
+from src.fusion.evidence_policy import EvidenceResolutionPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ class FusionEngine:
         llm_config: Optional[LLMConfig] = None,
         temporal_window_seconds: float = 3.0,
         min_confidence: float = 0.3,
+        escalate_conflict_min_conf: float = 0.7,
     ):
         self.llm_provider = llm_provider
         self.llm_config = llm_config or LLMConfig(
@@ -28,6 +30,11 @@ class FusionEngine:
         )
         self.temporal_window_seconds = temporal_window_seconds
         self.min_confidence = min_confidence
+        self.evidence_policy = EvidenceResolutionPolicy(
+            escalate_conflict_min_conf=escalate_conflict_min_conf,
+            min_confidence=min_confidence
+        )
+        self.all_conflicts = []
 
     def fuse_timeline(self, timeline: Timeline) -> List[Event]:
         """
@@ -41,6 +48,7 @@ class FusionEngine:
         """
         import time
         start_time = time.time()
+        self.all_conflicts = []
         observations = timeline.observations
         if not observations:
             logger.info("FusionEngine: Timeline contains no observations. Returning empty event list.")
@@ -93,29 +101,59 @@ class FusionEngine:
         )
 
         for idx, group in enumerate(groups):
-            # Preprocess group to handle OCR priority and audio reliability
-            has_visual = any(o.source == "visual" for o in group)
-            highest_visual_conf = max((o.confidence for o in group if o.source == "visual"), default=0.0)
-            
-            processed_group = []
-            for o in group:
-                if o.source == "text":
-                    # OCR Priority: OCR is supporting, prefer Vision unless OCR confidence is significantly higher (> 0.25 margin)
-                    if has_visual and o.confidence <= highest_visual_conf + 0.25:
-                        o.confidence = min(o.confidence, highest_visual_conf * 0.8)
-                        logger.debug(f"FusionEngine OCR priority: downweighted OCR {o.content} confidence to {o.confidence:.2f}")
-                elif o.source == "audio":
-                    # Audio Reliability: noisy audio transcripts shouldn't generate events alone
-                    if not has_visual:
-                        if o.confidence < 0.6:
-                            logger.warning(f"FusionEngine Audio reliability: dropping unconfirmed noisy audio transcript {o.content}")
-                            continue
-                        else:
-                            o.confidence *= 0.5  # Downweight unconfirmed speech
-                processed_group.append(o)
+            # Resolve group using EvidenceResolutionPolicy
+            resolved = self.evidence_policy.resolve(group)
+            self.all_conflicts.extend(resolved.conflicts)
+            processed_group = resolved.kept
+
+            # Escalate any modality contradictions that require LLM resolution
+            escalated_conflicts = [c for c in resolved.conflicts if c.get("type") == "modality_contradiction" and c.get("escalate_to_llm")]
+            if escalated_conflicts:
+                for conf in escalated_conflicts:
+                    conflict_prompt = (
+                        f"Conflict detected:\n"
+                        f"- Visual observation: \"{conf['visual']}\" (confidence: {conf['visual_conf']:.2f})\n"
+                        f"- Audio/Speech observation: \"{conf['audio']}\" (confidence: {conf['audio_conf']:.2f})\n\n"
+                        "Resolve the contradiction. Which observation is correct, or how do they combine? "
+                        "Respond with a single JSON object matching this schema:\n"
+                        "{\n"
+                        "  \"resolution\": \"visual | audio | combined\",\n"
+                        "  \"content\": \"resolved content text\",\n"
+                        "  \"confidence\": float (between 0.0 and 1.0),\n"
+                        "  \"rationale\": \"<= 15 words rationale\"\n"
+                        "}"
+                    )
+                    try:
+                        resp = self.llm_provider.generate(
+                            prompt=conflict_prompt,
+                            system_prompt="You are a video evidence conflict resolver. Resolve modality contradictions logically.",
+                            config=self.llm_config
+                        )
+                        from src.shared.fireworks_providers import _parse_and_repair_json
+                        resolution_data = _parse_and_repair_json(resp)
+                        if isinstance(resolution_data, dict) and "content" in resolution_data:
+                            conf["gemma_verdict"] = resolution_data
+                            logger.info(f"Gemma resolved conflict: {resolution_data}")
+                    except Exception as e:
+                        logger.error(f"Failed to resolve conflict with Gemma: {e}")
 
             if not processed_group:
                 continue
+
+            # P4.2: decide whether this window carries a genuine, surfaceable ambiguity.
+            # Rule (plan Step 12): hedge only when the two contested interpretations have
+            # a confidence gap < 0.15 AND neither confidence is a `default` placeholder.
+            window_contested = False
+            window_alternatives: List[str] = []
+            for v, a in resolved.contested_pairs:
+                v_src = v.confidence_meta.source if v.confidence_meta else "default"
+                a_src = a.confidence_meta.source if a.confidence_meta else "default"
+                both_measured = v_src != "default" and a_src != "default"
+                if both_measured and abs(v.confidence - a.confidence) < 0.15:
+                    window_contested = True
+                    for content in (v.content, a.content):
+                        if content not in window_alternatives:
+                            window_alternatives.append(content)
 
             t_start = min(obs.timestamp for obs in processed_group)
             t_end = max(obs.timestamp for obs in processed_group)
@@ -148,21 +186,36 @@ class FusionEngine:
                 # Parse and repair LLM response defensively
                 parsed_events = self._parse_llm_response(response)
                 
+                # Provenance back-link: every event fused from this window is grounded
+                # in the observations that fed it. Kept even though the LLM compresses
+                # them into prose, so the EJR / unsupported-claim checks stay traceable.
+                window_obs_ids = [o.id for o in processed_group if o.id is not None]
+
                 if parsed_events:
                     for evt in parsed_events:
                         # Validate and clamp bounds
                         evt.timestamp_start = max(t_start, min(t_end, evt.timestamp_start))
                         evt.timestamp_end = max(evt.timestamp_start, min(t_end, evt.timestamp_end))
-                        
+                        evt.source_observation_ids = window_obs_ids
+                        if window_contested:
+                            evt.contested = True
+                            evt.alternatives = window_alternatives
+
                         if evt.confidence >= self.min_confidence:
                             events.append(evt)
                 else:
                     logger.warning(f"Window {idx} parsing failed. Using rule-based fallback.")
-                    events.append(self._rule_based_fallback(processed_group, t_start, t_end))
+                    fb = self._rule_based_fallback(processed_group, t_start, t_end)
+                    fb.contested = window_contested
+                    fb.alternatives = window_alternatives
+                    events.append(fb)
 
             except Exception as e:
                 logger.error(f"Failed to fuse window {idx} via LLM: {e}. Using rule-based fallback.")
-                events.append(self._rule_based_fallback(processed_group, t_start, t_end))
+                fb = self._rule_based_fallback(processed_group, t_start, t_end)
+                fb.contested = window_contested
+                fb.alternatives = window_alternatives
+                events.append(fb)
 
         # Sort all fused events chronologically
         sorted_events = sorted(events, key=lambda x: x.timestamp_start)
@@ -255,5 +308,6 @@ class FusionEngine:
             timestamp_end=t_end,
             confidence=avg_confidence,
             evidence_sources=list(sources),
-            salience=0.5
+            salience=0.5,
+            source_observation_ids=[o.id for o in group if o.id is not None]
         )

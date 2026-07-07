@@ -91,3 +91,69 @@ def test_garbage_llm_fallback():
     assert narrative.key_events == ["starts engine"]
     assert narrative.salience_scores["starts engine"] == 0.8
     assert narrative.evidence_mapping["starts engine"] == ["visual"]
+
+
+def test_evidence_sources_propagation():
+    # Construct nodes with custom evidence sources
+    nodes = [
+        GraphNode(
+            id="ev1",
+            type="event",
+            label="detect siren",
+            attributes={
+                "timestamp_start": 2.0,
+                "salience": 0.9,
+                "evidence_sources": ["audio", "text"]
+            }
+        ),
+    ]
+    graph = SemanticGraph(nodes=nodes, edges=[])
+
+    broken_llm = BrokenLLMProvider()
+    builder = NarrativeBuilder(llm_provider=broken_llm)
+    narrative = builder.build_narrative(graph)
+
+    # In rule-based fallback, evidence_mapping should reflect attributes["evidence_sources"]
+    assert narrative.evidence_mapping["detect siren"] == ["audio", "text"]
+
+
+class CapturingLLMProvider(LLMProvider):
+    def __init__(self):
+        self.captured_prompt = None
+        self.captured_system_prompt = None
+
+    def generate(self, prompt, system_prompt, config):
+        self.captured_prompt = prompt
+        self.captured_system_prompt = system_prompt
+        return """{
+            "text": "A chronological summary detailing graph events.",
+            "key_events": ["event A", "event B"],
+            "salience_scores": {"event A": 0.8, "event B": 0.9},
+            "evidence_mapping": {"event A": ["visual"], "event B": ["audio"]}
+        }"""
+
+
+def test_consume_edges_prompt_construction():
+    nodes = [
+        GraphNode(id="ev1", type="event", label="event A", attributes={"timestamp_start": 0.0, "salience": 0.9}),
+        GraphNode(id="ev2", type="event", label="event B", attributes={"timestamp_start": 2.0, "salience": 0.8}),
+    ]
+    edges = [
+        GraphEdge(source="dog", target="ev1", relationship="participates_in"),
+        GraphEdge(source="ev1", target="ev2", relationship="temporal"),
+        GraphEdge(source="ev1", target="ev2", relationship="causal"),
+    ]
+    graph = SemanticGraph(nodes=nodes, edges=edges)
+
+    capturing_llm = CapturingLLMProvider()
+    builder = NarrativeBuilder(llm_provider=capturing_llm, consume_edges=True)
+    builder.build_narrative(graph)
+
+    # Assert that edge consumption is reflected in the prompt parameters
+    assert capturing_llm.captured_prompt is not None
+    assert "Entity 'dog' participates in:" in capturing_llm.captured_prompt
+    assert "Event ev1 happened before Event ev2" in capturing_llm.captured_prompt
+    assert "Event ev1 causally triggered Event ev2" in capturing_llm.captured_prompt
+    assert "respect these entity participation sequences" in capturing_llm.captured_system_prompt
+
+

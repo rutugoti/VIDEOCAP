@@ -17,8 +17,8 @@ class VideoLoader:
     def __init__(
         self,
         supported_formats: Optional[List[str]] = None,
-        min_duration: float = 30.0,
-        max_duration: float = 120.0,
+        min_duration: float = 0.0,
+        max_duration: float = 300.0,
     ):
         self.supported_formats = supported_formats or [".mp4", ".mkv", ".mov", ".avi"]
         self.min_duration = min_duration

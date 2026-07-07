@@ -1,28 +1,30 @@
 # Model provider configuration
+# Providers can be a single string (e.g. "gemini") or a fallback list (e.g. ["gemini", "fireworks", "mock"])
 vision:
-  provider: "fireworks"
-  model: "accounts/fireworks/models/gemma-4-31b-it"  # Updated to Gemma Multimodal VLM
+  provider: ["gemini", "fireworks", "mock"]
+  model: "gemini-2.5-flash"  # Will fall back to fireworks or mock if gemini API key is not set
   max_tokens: 4096
   temperature: 0.2
 
 speech:
-  provider: "fireworks"
+  provider: ["fireworks", "openai", "mock"]
   model: "whisper-v3"
   language: "en"
 
 ocr:
-  provider: "fireworks"
-  model: "accounts/fireworks/models/gemma-4-31b-it"  # Updated to Gemma Multimodal VLM
+  provider: ["gemini", "fireworks", "mock"]
+  model: "gemini-2.5-flash"
   max_tokens: 1024
 
 llm:
-  provider: "fireworks"
-  model: "accounts/fireworks/models/gemma-3-27b-it"  # Updated to Gemma Text Reasoning LLM
+  provider: ["gemini", "fireworks", "mock"]
+  model: "gemini-2.5-flash"
   max_tokens: 512
   temperature: 0.7
 
 validator:
-  provider: "fireworks"
-  model: "accounts/fireworks/models/gemma-3-27b-it"  # Updated to Gemma Text Reasoning LLM
+  provider: ["gemini", "fireworks", "mock"]
+  model: "gemini-2.5-flash"
   max_tokens: 1024
   temperature: 0.1
+

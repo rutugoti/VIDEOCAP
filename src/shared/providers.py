@@ -10,6 +10,7 @@ from src.shared.models import (
     Narrative,
     ValidationReport,
     CaptionValidation,
+    Confidence,
 )
 
 
@@ -51,34 +52,36 @@ class ValidationError(Exception):
 # Config Schemas
 # =====================================================================
 
+from typing import Union
+
 class VisionConfig(BaseModel):
-    provider: str
+    provider: Union[str, List[str]]
     model: str
     max_tokens: int = 4096
     temperature: float = 0.2
 
 
 class AudioConfig(BaseModel):
-    provider: str
+    provider: Union[str, List[str]]
     model: str
     language: str = "en"
 
 
 class OCRConfig(BaseModel):
-    provider: str
+    provider: Union[str, List[str]]
     model: str
     max_tokens: int = 1024
 
 
 class LLMConfig(BaseModel):
-    provider: str
+    provider: Union[str, List[str]]
     model: str
     max_tokens: int = 512
     temperature: float = 0.7
 
 
 class ValidatorConfig(BaseModel):
-    provider: str
+    provider: Union[str, List[str]]
     model: str
     max_tokens: int = 1024
     temperature: float = 0.1
@@ -188,6 +191,7 @@ class MockVisionProvider(VisionProvider):
                     content=f"action observed at timestamp {f.timestamp}s",
                     timestamp=f.timestamp,
                     confidence=0.90,
+                    confidence_meta=Confidence(value=0.90, source="default"),
                     source="visual",
                     observation_type="action"
                 )
@@ -199,6 +203,7 @@ class MockVisionProvider(VisionProvider):
                         content="kitchen scene with modern appliances",
                         timestamp=f.timestamp,
                         confidence=0.95,
+                        confidence_meta=Confidence(value=0.95, source="default"),
                         source="visual",
                         observation_type="scene"
                     )
@@ -223,6 +228,7 @@ class MockAudioProvider(AudioProvider):
                         content=f"spoken words recorded at {f.timestamp}s",
                         timestamp=f.timestamp,
                         confidence=0.88,
+                        confidence_meta=Confidence(value=0.88, source="default"),
                         source="audio",
                         observation_type="speech"
                     )
@@ -247,6 +253,7 @@ class MockOCRProvider(OCRProvider):
                         content="mock brand logo text",
                         timestamp=f.timestamp,
                         confidence=0.92,
+                        confidence_meta=Confidence(value=0.92, source="default"),
                         source="text",
                         observation_type="ocr_text"
                     )
@@ -266,6 +273,58 @@ class MockLLMProvider(LLMProvider):
         # Pre-canned mock responses depending on keyword detection
         prompt_lower = prompt.lower()
         sys_lower = system_prompt.lower()
+
+        # P4.1: Unsupported-claim entailment adjudicator mock.
+        # Classifies candidate terms; treats affect/manner words as unsupported.
+        if "entailment adjudicator" in sys_lower:
+            affect_words = ["happily", "angrily", "sadly", "finally", "furiously", "excitedly", "reluctantly"]
+            unsupported = [w for w in affect_words if w in prompt_lower]
+            import json as _json
+            return _json.dumps({"supported": [], "entailed": [], "unsupported": unsupported})
+
+        # P3.1: Causal relationship classifier mock
+        if "causal relationship classifier" in sys_lower:
+            # Use simple heuristics to decide mock verdict
+            if "cause" in prompt_lower or "trigger" in prompt_lower or "start" in prompt_lower:
+                return '{"relationship": "causal", "confidence": 0.85, "rationale": "Direct cause-effect from description keywords."}'
+            elif "enable" in prompt_lower or "condition" in prompt_lower or "allow" in prompt_lower:
+                return '{"relationship": "enables", "confidence": 0.75, "rationale": "Enabling condition detected."}'
+            else:
+                return '{"relationship": "temporal", "confidence": 0.60, "rationale": "Only temporal sequence observed."}'
+
+
+        is_single_pass = (
+            ("formal" in prompt_lower and "sarcastic" in prompt_lower and "tech_humor" in prompt_lower and "non_tech_humor" in prompt_lower) or
+            ("formal" in sys_lower and "sarcastic" in sys_lower and "tech_humor" in sys_lower and "non_tech_humor" in sys_lower)
+        )
+        if is_single_pass:
+            if "test_missing_key" in prompt_lower:
+                return """{
+                    "sarcastic": "Oh fantastic, another video where events happen. Absolutely groundbreaking.",
+                    "tech_humor": "EventLoop returned status code 200 after resolving kitchen tasks successfully.",
+                    "non_tech_humor": "Well, the kitchen is clean but the coffee is gone."
+                }"""
+            elif "test_over_budget" in prompt_lower:
+                return """{
+                    "formal": "This is a extremely long and verbose response designed specifically to exceed the maximum word count limit of thirty five words on the very first attempt to trigger the retry validation block and it contains extra words to exceed the threshold easily.",
+                    "sarcastic": "Oh fantastic, another video where events happen. Absolutely groundbreaking.",
+                    "tech_humor": "EventLoop returned status code 200 after resolving kitchen tasks successfully.",
+                    "non_tech_humor": "Well, the kitchen is clean but the coffee is gone."
+                }"""
+            elif "test_low_separation" in prompt_lower:
+                return """{
+                    "formal": "A person enters the kitchen, starts the coffee maker, and exits.",
+                    "sarcastic": "Oh fantastic, another video where events happen.",
+                    "tech_humor": "EventLoop returned status code 200 after resolving kitchen tasks successfully.",
+                    "non_tech_humor": "EventLoop returned status code 200 after resolving kitchen tasks successfully."
+                }"""
+            else:
+                return """{
+                    "formal": "A formal rewrite of the video narrative detailing events sequentially, ensuring all facts are preserved.",
+                    "sarcastic": "Oh fantastic, another video where events happen. Absolutely groundbreaking, and I am completely thrilled by this development.",
+                    "tech_humor": "EventLoop returned status code 200 after resolving kitchen tasks successfully and flushing the local cache.",
+                    "non_tech_humor": "Well, the kitchen is clean but the coffee is gone. Classic morning tragedy that happens to the best of us."
+                }"""
 
         # Check system prompt first (specific role indicators to avoid positive/negative rule collisions)
         if "fact-checker" in sys_lower or "validator" in sys_lower:
@@ -402,3 +461,129 @@ class MockValidator(Validator):
             hallucination_count=0,
             consistency_score=1.0
         )
+
+
+# =====================================================================
+# Legacy Compatibility Adapters
+# =====================================================================
+from src.providers.base import ProviderConfig
+
+class LegacyVisionProviderAdapter(VisionProvider):
+    def __init__(self, agnostic_provider):
+        self.agnostic_provider = agnostic_provider
+
+    def analyze_frames(self, frames: List[Sample], prompt: str, config: VisionConfig) -> List[Observation]:
+        p_cfg = ProviderConfig(
+            provider_name=config.provider,
+            model_name=config.model,
+            max_tokens=config.max_tokens,
+            temperature=config.temperature
+        )
+        res_obs = self.agnostic_provider.analyze_frames(frames, prompt, p_cfg)
+        out = []
+        for o in res_obs:
+            out.append(
+                Observation(
+                    content=o.content,
+                    timestamp=o.timestamp,
+                    confidence=o.confidence,
+                    confidence_meta=Confidence(value=o.confidence, source="model_reported"),
+                    source="visual",
+                    observation_type=o.observation_type
+                )
+            )
+        return out
+
+class LegacyAudioProviderAdapter(AudioProvider):
+    def __init__(self, agnostic_provider):
+        self.agnostic_provider = agnostic_provider
+
+    def transcribe(self, frames: List[Sample], config: AudioConfig) -> List[Observation]:
+        p_cfg = ProviderConfig(
+            provider_name=config.provider,
+            model_name=config.model,
+            extra_params={"language": config.language}
+        )
+        res_obs = self.agnostic_provider.transcribe(frames, p_cfg)
+        out = []
+        for o in res_obs:
+            out.append(
+                Observation(
+                    content=o.content,
+                    timestamp=o.timestamp,
+                    confidence=o.confidence,
+                    confidence_meta=Confidence(value=o.confidence, source="measured"),
+                    source="audio",
+                    observation_type="speech"
+                )
+            )
+        return out
+
+class LegacyOCRProviderAdapter(OCRProvider):
+    def __init__(self, agnostic_provider):
+        self.agnostic_provider = agnostic_provider
+
+    def extract_text(self, frames: List[Sample], config: OCRConfig) -> List[Observation]:
+        p_cfg = ProviderConfig(
+            provider_name=config.provider,
+            model_name=config.model,
+            max_tokens=config.max_tokens
+        )
+        res_obs = self.agnostic_provider.extract_text(frames, p_cfg)
+        out = []
+        for o in res_obs:
+            out.append(
+                Observation(
+                    content=o.content,
+                    timestamp=o.timestamp,
+                    confidence=o.confidence,
+                    confidence_meta=Confidence(value=o.confidence, source="model_reported"),
+                    source="text",
+                    observation_type="ocr_text"
+                )
+            )
+        return out
+
+class LegacyLLMProviderAdapter(LLMProvider):
+    def __init__(self, agnostic_provider):
+        self.agnostic_provider = agnostic_provider
+
+    def generate(self, prompt: str, system_prompt: str, config: LLMConfig) -> str:
+        p_cfg = ProviderConfig(
+            provider_name=config.provider,
+            model_name=config.model,
+            max_tokens=config.max_tokens,
+            temperature=config.temperature
+        )
+        res = self.agnostic_provider.generate(prompt, system_prompt, p_cfg)
+        return res.text
+
+class LegacyValidatorAdapter(Validator):
+    def __init__(self, agnostic_provider):
+        self.agnostic_provider = agnostic_provider
+
+    def validate(self, captions: Dict[str, Caption], narrative: Narrative, config: ValidatorConfig) -> ValidationReport:
+        p_cfg = ProviderConfig(
+            provider_name=config.provider,
+            model_name=config.model,
+            max_tokens=config.max_tokens,
+            temperature=config.temperature
+        )
+        res = self.agnostic_provider.validate(captions, narrative, p_cfg)
+        
+        per_caption_validation = {}
+        for style, cap in captions.items():
+            per_caption_validation[style] = CaptionValidation(
+                style=style,
+                passed=res.passed,
+                hallucinations=res.hallucinations,
+                missing_facts=res.missing_facts,
+                style_adherence=res.style_adherence
+            )
+        return ValidationReport(
+            overall_pass=res.passed,
+            per_caption=per_caption_validation,
+            hallucination_count=len(res.hallucinations),
+            consistency_score=res.overall_confidence
+        )
+

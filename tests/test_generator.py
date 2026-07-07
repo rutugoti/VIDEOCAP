@@ -111,3 +111,69 @@ User prompt template for {narrative}.
     # Fallback check
     sys_fallback, usr_fallback = generator._load_prompt("sarcastic")
     assert sys_fallback == generator.FALLBACK_PROMPTS["sarcastic"]["system"]
+
+
+def test_single_pass_success():
+    narrative = Narrative(
+        text="A person enters the kitchen, starts the coffee maker, and exits.",
+        key_events=["enters kitchen", "starts coffee maker", "exits kitchen"],
+        salience_scores={"enters kitchen": 0.5, "starts coffee maker": 0.95, "exits kitchen": 0.4},
+        evidence_mapping={"enters kitchen": ["visual"], "starts coffee maker": ["visual", "audio"], "exits kitchen": ["visual"]}
+    )
+    mock_llm = MockLLMProvider()
+    generator = StyleGenerator(llm_provider=mock_llm, single_pass=True, style_separation_min=0.4)
+    captions = generator.generate_captions(narrative)
+    assert set(captions.keys()) == {"formal", "sarcastic", "tech_humor", "non_tech_humor"}
+    assert captions["formal"].metadata.get("regenerated") is False
+    assert captions["sarcastic"].metadata.get("regenerated") is False
+
+
+def test_single_pass_missing_key():
+    # Trigger trigger phrase for test_missing_key mock behavior
+    narrative = Narrative(
+        text="test_missing_key: A person enters the kitchen.",
+        key_events=[],
+        salience_scores={},
+        evidence_mapping={}
+    )
+    mock_llm = MockLLMProvider()
+    generator = StyleGenerator(llm_provider=mock_llm, single_pass=True)
+    captions = generator.generate_captions(narrative)
+    # The missing key "formal" should have been regenerated in isolation
+    assert set(captions.keys()) == {"formal", "sarcastic", "tech_humor", "non_tech_humor"}
+    assert "formal rewrite" in captions["formal"].text.lower()
+
+
+def test_single_pass_over_budget_deterministic_trim():
+    # Trigger trigger phrase for test_over_budget mock behavior
+    narrative = Narrative(
+        text="test_over_budget: A person enters the kitchen.",
+        key_events=[],
+        salience_scores={},
+        evidence_mapping={}
+    )
+    mock_llm = MockLLMProvider()
+    generator = StyleGenerator(llm_provider=mock_llm, single_pass=True)
+    captions = generator.generate_captions(narrative)
+    # "formal" style returned is extremely long, so it gets trimmed
+    assert set(captions.keys()) == {"formal", "sarcastic", "tech_humor", "non_tech_humor"}
+    # The word count must be within limit (35 words)
+    assert len(captions["formal"].text.split()) <= 35
+
+
+def test_single_pass_low_separation_regeneration():
+    # Trigger trigger phrase for test_low_separation mock behavior
+    # This will make tech_humor and non_tech_humor identical, triggering regeneration for both
+    narrative = Narrative(
+        text="test_low_separation: A person enters.",
+        key_events=[],
+        salience_scores={},
+        evidence_mapping={}
+    )
+    mock_llm = MockLLMProvider()
+    generator = StyleGenerator(llm_provider=mock_llm, single_pass=True, style_separation_min=0.5)
+    captions = generator.generate_captions(narrative)
+    # Regeneration flag should be true for tech_humor and non_tech_humor
+    assert captions["tech_humor"].metadata.get("regenerated") is True
+    assert captions["non_tech_humor"].metadata.get("regenerated") is True
+
