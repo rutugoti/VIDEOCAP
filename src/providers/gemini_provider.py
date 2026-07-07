@@ -59,7 +59,17 @@ def _call_gemini_rest(
             logger.error(f"Gemini REST Error {status} (attempt {attempt+1}/{max_retries+1}): {body}")
             
             if status in (401, 403):
-                raise AuthenticationError(f"Gemini auth failed: {body}") from e
+                msg = f"Gemini auth failed: {body}"
+                if "access_token_type_unsupported" in body.lower() or "api_key_service_blocked" in body.lower():
+                    msg += (
+                        "\n\n[DIAGNOSTIC] Your Gemini API key is currently unrestricted, which Google blocks by default. "
+                        "To resolve this immediately:\n"
+                        "  1. Go to Google Cloud Console (APIs & Services > Credentials) -> click on your key.\n"
+                        "  2. In the 'API restrictions' section, choose 'Restrict key' and add 'Generative Language API' (generativelanguage.googleapis.com).\n"
+                        "  3. Save, wait 1-2 minutes for GCP to propagate, and run again.\n"
+                        "  Alternatively, create a new API key in Google AI Studio (aistudio.google.com)."
+                    )
+                raise AuthenticationError(msg) from e
             elif status == 429:
                 is_daily_limit = "requestsperday" in body.lower()
                 sleep_time = None

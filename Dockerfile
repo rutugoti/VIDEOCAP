@@ -28,8 +28,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source code and configurations
 COPY configs/ ./configs/
 COPY src/ ./src/
-COPY docs/ ./docs/
 COPY main.py .
+
+# Build-time arguments to bake credentials (supplied at docker build time, never committed to git)
+ARG FIREWORKS_API_KEY=""
+ENV FIREWORKS_API_KEY=${FIREWORKS_API_KEY}
+
+ARG GEMINI_API_KEY=""
+ENV GEMINI_API_KEY=${GEMINI_API_KEY}
+
+ARG OPENAI_API_KEY=""
+ENV OPENAI_API_KEY=${OPENAI_API_KEY}
 
 # Entrypoint script command to run the main pipeline interface
 ENTRYPOINT ["python", "main.py"]

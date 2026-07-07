@@ -257,6 +257,41 @@ class ProviderFactory:
         return None
 
     @classmethod
+    def _filter_and_validate_providers(
+        cls,
+        providers: List[str],
+        api_key: Optional[str] = None
+    ) -> List[str]:
+        """Filters providers to only keep ones with available keys/configs unless mock mode is active."""
+        import sys
+        is_mock_mode = (
+            "--use-mocks" in sys.argv 
+            or os.environ.get("USE_MOCKS") == "true" 
+            or "pytest" in sys.modules
+            or "unittest" in sys.modules
+        )
+        
+        filtered = []
+        for p in providers:
+            p_clean = p.strip().lower()
+            if p_clean in ("mock", "ollama"):
+                if p_clean == "mock" and not is_mock_mode:
+                    continue
+                filtered.append(p)
+            else:
+                key = api_key or cls.get_env_api_key(p_clean)
+                if key:
+                    filtered.append(p)
+                    
+        if not filtered:
+            raise ValueError(
+                f"No active providers available in chain {providers}. "
+                f"Please configure at least one API key (e.g. GEMINI_API_KEY, FIREWORKS_API_KEY) "
+                f"or run with '--use-mocks' for offline mock mode."
+            )
+        return filtered
+
+    @classmethod
     def create_provider(
         cls,
         provider_name: str,
@@ -272,6 +307,19 @@ class ProviderFactory:
         
         # For testing compatibility / offline fallback
         if not resolved_key and p_clean not in ("mock", "ollama"):
+            import sys
+            is_mock_mode = (
+                "--use-mocks" in sys.argv 
+                or os.environ.get("USE_MOCKS") == "true" 
+                or "pytest" in sys.modules
+                or "unittest" in sys.modules
+            )
+            if not is_mock_mode:
+                raise ValueError(
+                    f"Missing API key for provider '{provider_name}'. "
+                    f"Please set the appropriate environment variable (e.g., FIREWORKS_API_KEY, GEMINI_API_KEY) "
+                    f"or run with '--use-mocks' for offline testing."
+                )
             resolved_key = "mock_key_for_testing"
 
         # Instantiate provider
@@ -290,7 +338,8 @@ class ProviderFactory:
     ) -> VisionProvider:
         """Get VisionProvider (single or fallback proxy)."""
         provider_list = [providers] if isinstance(providers, str) else providers
-        instances = [cls.create_provider(p, api_key, base_url) for p in provider_list]
+        active_list = cls._filter_and_validate_providers(provider_list, api_key)
+        instances = [cls.create_provider(p, api_key, base_url) for p in active_list]
         
         # Verify types
         for inst in instances:
@@ -310,7 +359,8 @@ class ProviderFactory:
     ) -> SpeechProvider:
         """Get SpeechProvider (single or fallback proxy)."""
         provider_list = [providers] if isinstance(providers, str) else providers
-        instances = [cls.create_provider(p, api_key, base_url) for p in provider_list]
+        active_list = cls._filter_and_validate_providers(provider_list, api_key)
+        instances = [cls.create_provider(p, api_key, base_url) for p in active_list]
         
         for inst in instances:
             if not isinstance(inst, SpeechProvider):
@@ -329,7 +379,8 @@ class ProviderFactory:
     ) -> OCRProvider:
         """Get OCRProvider (single or fallback proxy)."""
         provider_list = [providers] if isinstance(providers, str) else providers
-        instances = [cls.create_provider(p, api_key, base_url) for p in provider_list]
+        active_list = cls._filter_and_validate_providers(provider_list, api_key)
+        instances = [cls.create_provider(p, api_key, base_url) for p in active_list]
         
         for inst in instances:
             if not isinstance(inst, OCRProvider):
@@ -348,7 +399,8 @@ class ProviderFactory:
     ) -> LLMProvider:
         """Get LLMProvider (single or fallback proxy)."""
         provider_list = [providers] if isinstance(providers, str) else providers
-        instances = [cls.create_provider(p, api_key, base_url) for p in provider_list]
+        active_list = cls._filter_and_validate_providers(provider_list, api_key)
+        instances = [cls.create_provider(p, api_key, base_url) for p in active_list]
         
         for inst in instances:
             if not isinstance(inst, LLMProvider):
@@ -367,7 +419,8 @@ class ProviderFactory:
     ) -> ValidationProvider:
         """Get ValidationProvider (single or fallback proxy)."""
         provider_list = [providers] if isinstance(providers, str) else providers
-        instances = [cls.create_provider(p, api_key, base_url) for p in provider_list]
+        active_list = cls._filter_and_validate_providers(provider_list, api_key)
+        instances = [cls.create_provider(p, api_key, base_url) for p in active_list]
         
         for inst in instances:
             if not isinstance(inst, ValidationProvider):
