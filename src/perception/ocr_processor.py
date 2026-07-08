@@ -8,21 +8,26 @@ logger = logging.getLogger(__name__)
 
 
 class OCRProcessor:
-    """Module responsible for extracting on-screen text from video frames using an OCRProvider."""
+    """Module responsible for extracting on-screen text from video frames using local EasyOCR."""
 
     def __init__(
         self,
-        provider: OCRProvider,
+        provider: Optional[OCRProvider] = None,
         config: Optional[OCRConfig] = None,
         min_confidence: float = 0.3,
     ):
         self.provider = provider
-        self.config = config or OCRConfig(
-            provider="fireworks",
-            model="accounts/fireworks/models/llava-v1.6",
-            max_tokens=1024
-        )
+        self.config = config
         self.min_confidence = min_confidence
+        self._reader = None
+
+    def _get_reader(self):
+        if self._reader is None:
+            import easyocr
+            logger.info("Initializing EasyOCR reader (this may take a moment on first run)...")
+            # Initialize easyocr with english language, suppress warnings, use CPU to ensure compatibility
+            self._reader = easyocr.Reader(['en'], gpu=False, verbose=False)
+        return self._reader
 
     @staticmethod
     def check_text_heuristics(frame_data: bytes) -> bool:
@@ -61,7 +66,7 @@ class OCRProcessor:
 
     def process(self, samples: List[Sample], mode: str = "DEEP") -> List[Observation]:
         """
-        Extract text from frames and return OCR text observations.
+        Extract text from frames and return OCR text observations using local EasyOCR.
 
         Args:
             samples: List of Sample frames.
@@ -87,31 +92,47 @@ class OCRProcessor:
                 f"{len(active_samples)} candidate text frames."
             )
             if not active_samples:
-                logger.info("OCRProcessor: No candidate text frames found. Skipping OCR API requests.")
+                logger.info("OCRProcessor: No candidate text frames found. Skipping OCR.")
                 return []
         else:
             logger.info(f"OCRProcessor: DEEP mode active. Processing all {len(samples)} frames.")
 
         try:
-            logger.info(f"OCRProcessor sending {len(active_samples)} frames to OCR provider.")
-            observations = self.provider.extract_text(
-                frames=active_samples,
-                config=self.config
-            )
-
-            # Filter by confidence and ensure correct source
+            import cv2
+            import numpy as np
+            
+            reader = self._get_reader()
+            logger.info(f"OCRProcessor running local EasyOCR on {len(active_samples)} frames.")
+            
             filtered_observations = []
-            for obs in observations:
-                if obs.source != "text":
-                    obs.source = "text"
+            for sample in active_samples:
+                nparr = np.frombuffer(sample.frame_data, np.uint8)
+                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if img is None:
+                    continue
                 
-                if obs.confidence >= self.min_confidence:
-                    filtered_observations.append(obs)
-                else:
-                    logger.debug(
-                        f"Skipping OCR observation '{obs.content}' due to low confidence: "
-                        f"{obs.confidence} < {self.min_confidence}"
+                # easyocr readtext returns a list of (bbox, text, prob)
+                results = reader.readtext(img)
+                
+                frame_text_blocks = []
+                avg_prob = 0.0
+                
+                for (_, text, prob) in results:
+                    if prob >= self.min_confidence:
+                        frame_text_blocks.append(text)
+                        avg_prob += prob
+                        
+                if frame_text_blocks:
+                    avg_prob /= len(frame_text_blocks)
+                    combined_text = " ".join(frame_text_blocks)
+                    obs = Observation(
+                        timestamp=sample.timestamp,
+                        source="text",
+                        content=combined_text,
+                        confidence=avg_prob,
+                        observation_type="ocr_text"
                     )
+                    filtered_observations.append(obs)
 
             # Sort chronologically by timestamp
             sorted_observations = sorted(filtered_observations, key=lambda x: x.timestamp)
@@ -123,7 +144,7 @@ class OCRProcessor:
                     deduplicated_observations.append(obs)
                 else:
                     prev_obs = deduplicated_observations[-1]
-                    # If content is identical (case-insensitive strip) and within close time bounds
+                    # If content is identical (case-insensitive strip)
                     content_match = obs.content.strip().lower() == prev_obs.content.strip().lower()
                     
                     if content_match:
@@ -136,14 +157,11 @@ class OCRProcessor:
 
             logger.info(
                 f"OCRProcessor generated {len(deduplicated_observations)} "
-                f"observations (filtered from {len(observations)})."
+                f"observations (filtered from {len(filtered_observations)} raw detections)."
             )
             return deduplicated_observations
 
-        except ProviderError as e:
-            logger.error(f"OCR provider API failed: {e}")
-            raise
         except Exception as e:
-            logger.error(f"Unexpected error in OCRProcessor: {e}")
+            logger.error(f"Unexpected error in local OCRProcessor: {e}")
             raise ProviderError(f"OCR processor internal failure: {e}") from e
 

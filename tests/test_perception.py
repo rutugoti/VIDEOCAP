@@ -85,10 +85,32 @@ def test_speech_api_failure():
 # =====================================================================
 # OCRProcessor Tests
 # =====================================================================
+from unittest.mock import patch, MagicMock
+import numpy as np
 
-def test_ocr_clear_text():
-    mock_ocr = MockOCRProvider()
-    processor = OCRProcessor(provider=mock_ocr)
+class MockEasyOCRReader:
+    def __init__(self, mock_results):
+        self.mock_results = mock_results
+        self.call_count = 0
+
+    def readtext(self, img):
+        if self.call_count < len(self.mock_results):
+            res = self.mock_results[self.call_count]
+            self.call_count += 1
+            return res
+        return []
+
+@patch('cv2.imdecode')
+def test_ocr_clear_text(mock_imdecode):
+    mock_imdecode.return_value = np.zeros((10,10,3), dtype=np.uint8)
+    
+    processor = OCRProcessor()
+    # Mock the reader to return a specific text on the second frame
+    processor._reader = MockEasyOCRReader([
+        [], # frame 0: no text
+        [ (None, "brand logo", 0.95) ], # frame 1
+        [], # frame 2
+    ])
 
     samples = [
         Sample(frame_data=b"f1", timestamp=0.0, sample_index=0),
@@ -103,35 +125,42 @@ def test_ocr_clear_text():
     assert "brand logo" in observations[0].content
 
 
-def test_ocr_no_text():
-    # An OCR provider returning empty observations
-    empty_ocr = CustomOCRProvider([])
-    processor = OCRProcessor(provider=empty_ocr)
+@patch('cv2.imdecode')
+def test_ocr_no_text(mock_imdecode):
+    mock_imdecode.return_value = np.zeros((10,10,3), dtype=np.uint8)
+    processor = OCRProcessor()
+    processor._reader = MockEasyOCRReader([[]])
 
     samples = [Sample(frame_data=b"f1", timestamp=0.0, sample_index=0)]
     assert processor.process(samples) == []
 
 
-def test_ocr_deduplication():
-    # Observations containing duplicate text on consecutive frames
-    obs1 = Observation(content="  Warning  ", timestamp=1.0, confidence=0.7, source="text", observation_type="ocr_text")
-    obs2 = Observation(content="warning", timestamp=2.0, confidence=0.9, source="text", observation_type="ocr_text")
-    obs3 = Observation(content="Stop", timestamp=3.0, confidence=0.85, source="text", observation_type="ocr_text")
-    obs4 = Observation(content="warning", timestamp=4.0, confidence=0.8, source="text", observation_type="ocr_text")
+@patch('cv2.imdecode')
+def test_ocr_deduplication(mock_imdecode):
+    mock_imdecode.return_value = np.zeros((10,10,3), dtype=np.uint8)
+    processor = OCRProcessor(min_confidence=0.5)
+    
+    # 4 frames:
+    # 1. "  Warning  " (0.7)
+    # 2. "warning" (0.9)
+    # 3. "Stop" (0.85)
+    # 4. "warning" (0.8)
+    processor._reader = MockEasyOCRReader([
+        [ (None, "  Warning  ", 0.7) ],
+        [ (None, "warning", 0.9) ],
+        [ (None, "Stop", 0.85) ],
+        [ (None, "warning", 0.8) ]
+    ])
 
-    custom_ocr = CustomOCRProvider([obs1, obs2, obs3, obs4])
-    processor = OCRProcessor(provider=custom_ocr)
-
-    samples = [Sample(frame_data=b"f1", timestamp=0.0, sample_index=0)]
+    samples = [
+        Sample(frame_data=b"f1", timestamp=1.0, sample_index=0),
+        Sample(frame_data=b"f2", timestamp=2.0, sample_index=1),
+        Sample(frame_data=b"f3", timestamp=3.0, sample_index=2),
+        Sample(frame_data=b"f4", timestamp=4.0, sample_index=3),
+    ]
+    
     results = processor.process(samples)
 
-    # obs1 and obs2 are consecutive duplicates. obs2 (confidence 0.9) should merge/replace obs1 (0.7).
-    # obs3 ("Stop") is different.
-    # obs4 ("warning") is not consecutive to obs2, so it is kept.
-    # Resulting order:
-    # 1. obs2 (timestamp 2.0, content "warning")
-    # 2. obs3 (timestamp 3.0, content "Stop")
-    # 3. obs4 (timestamp 4.0, content "warning")
     assert len(results) == 3
     assert results[0].timestamp == 2.0
     assert results[0].confidence == 0.9
@@ -139,9 +168,16 @@ def test_ocr_deduplication():
     assert results[2].timestamp == 4.0
 
 
-def test_ocr_api_failure():
-    broken = BrokenOCRProvider()
-    processor = OCRProcessor(provider=broken)
+@patch('cv2.imdecode')
+def test_ocr_api_failure(mock_imdecode):
+    mock_imdecode.return_value = np.zeros((10,10,3), dtype=np.uint8)
+    processor = OCRProcessor()
+    
+    class BrokenReader:
+        def readtext(self, img):
+            raise Exception("OCR engine crashed")
+            
+    processor._reader = BrokenReader()
     samples = [Sample(frame_data=b"f1", timestamp=0.0, sample_index=0)]
 
     with pytest.raises(ProviderError):
