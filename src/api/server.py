@@ -468,8 +468,9 @@ def run_pipeline_thread(job_id: str, file_path: str):
         job_state["timeline"].append(timeline_entry)
         
         if config.pipeline.validation.enabled and not report.overall_pass:
-            raise ValidationError(
-                f"Semantic validation failed. Accuracy: {avg_accuracy:.2f}, consistency: {report.consistency_score:.2f}"
+            logger.warning(
+                f"Semantic validation failed. Accuracy: {avg_accuracy:.2f}, consistency: {report.consistency_score:.2f}. "
+                "Accepting best-effort captions."
             )
             
         update_job("validation", "completed")

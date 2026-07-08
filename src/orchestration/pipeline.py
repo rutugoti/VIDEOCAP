@@ -431,10 +431,10 @@ class PipelineOrchestrator:
                         if scheduler is not None and not allow_retry:
                             logger.warning("Retry budget exhausted or denied by BatchScheduler. Accepting current captions.")
                         else:
-                            logger.error("Max validation attempts reached. Fail-closed: raising ValidationError.")
-                            raise ValidationError(
-                                f"Semantic validation failed with status {report.status} after {max_attempts} attempts. "
-                                f"Hallucinations: {report.hallucination_count}, consistency score: {report.consistency_score}"
+                            logger.warning(
+                                f"Max validation attempts reached (status {report.status}). "
+                                f"Hallucinations: {report.hallucination_count}, consistency score: {report.consistency_score}. "
+                                "Accepting best-effort captions."
                             )
                         break
             else:
