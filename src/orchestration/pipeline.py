@@ -215,18 +215,25 @@ class PipelineOrchestrator:
 
         self.submission_formatter = SubmissionFormatter()
 
-    def process_video(self, video_path: str) -> Dict[str, Caption]:
+    def process_video(
+        self,
+        video_path: str,
+        mode: str = "BALANCED",
+        scheduler: Optional[Any] = None
+    ) -> Dict[str, Caption]:
         """
         Execute the pipeline on a single video file, returning the validated captions.
 
         Args:
             video_path: Path to the video file.
+            mode: Execution mode ('FAST', 'BALANCED', 'DEEP').
+            scheduler: Optional BatchScheduler instance to check retry authorization.
 
         Returns:
             Dict mapping caption style name to Caption objects.
         """
         import time
-        logger.info(f"Starting pipeline orchestration for: {video_path}")
+        logger.info(f"Starting pipeline orchestration for: {video_path} in mode {mode}")
         pipeline_start = time.time()
 
         # Step 1: Ingestion
@@ -236,7 +243,28 @@ class PipelineOrchestrator:
 
         # Step 2: Sampling
         t0 = time.time()
-        samples = self.adaptive_sampler.sample_video(descriptor)
+        if mode == "FAST":
+            # FAST mode: temporarily restrict sampling density to 4-5 frames
+            original_max = self.adaptive_sampler.max_frames
+            original_min = self.adaptive_sampler.min_frames
+            self.adaptive_sampler.max_frames = 5
+            self.adaptive_sampler.min_frames = 4
+            samples = self.adaptive_sampler.sample_video(descriptor)
+            self.adaptive_sampler.max_frames = original_max
+            self.adaptive_sampler.min_frames = original_min
+        elif mode == "BALANCED":
+            # BALANCED mode: scale target sampling to 6-10 frames
+            original_max = self.adaptive_sampler.max_frames
+            original_min = self.adaptive_sampler.min_frames
+            self.adaptive_sampler.max_frames = 10
+            self.adaptive_sampler.min_frames = 6
+            samples = self.adaptive_sampler.sample_video(descriptor)
+            self.adaptive_sampler.max_frames = original_max
+            self.adaptive_sampler.min_frames = original_min
+        else:
+            # DEEP mode: full sampling capability (up to 30 frames)
+            samples = self.adaptive_sampler.sample_video(descriptor)
+            
         logger.info(f"Sampling latency: {time.time() - t0:.2f}s | Frames sampled: {len(samples)}")
 
         # Step 3: Perception (Parallel / Sequential / Cached)
@@ -252,7 +280,8 @@ class PipelineOrchestrator:
             "speech_model": self.config.models.speech.model,
             "ocr_enabled": perception_cfg.ocr.enabled,
             "ocr_model": self.config.models.ocr.model,
-            "sampling_frames": len(samples)
+            "sampling_frames": len(samples),
+            "mode": mode
         }
         perception_key = get_cache_key(video_path, "perception", perception_extra_cfg)
         cached_obs = load_from_cache(perception_key)
@@ -268,9 +297,9 @@ class PipelineOrchestrator:
                     if perception_cfg.vision.enabled:
                         futures[executor.submit(self.vision_processor.process, samples)] = "vision"
                     if perception_cfg.speech.enabled:
-                        futures[executor.submit(self.speech_processor.process, samples, descriptor.has_audio)] = "speech"
+                        futures[executor.submit(self.speech_processor.process, samples, descriptor.has_audio, mode)] = "speech"
                     if perception_cfg.ocr.enabled:
-                        futures[executor.submit(self.ocr_processor.process, samples)] = "ocr"
+                        futures[executor.submit(self.ocr_processor.process, samples, mode)] = "ocr"
 
                     failed_modules = []
                     try:
@@ -281,9 +310,6 @@ class PipelineOrchestrator:
                                 observations.extend(result)
                                 logger.info(f"Perception module '{proc_name}' finished with {len(result)} observations.")
                             except Exception as e:
-                                # Degrade gracefully: a single modality failing (e.g. a provider
-                                # rate limit) should not discard the real observations produced by
-                                # the others. Only a total wipeout is fatal.
                                 logger.error(f"Perception module '{proc_name}' failed with error: {e}. Continuing with other modalities.")
                                 failed_modules.append(proc_name)
                     except TimeoutError as e:
@@ -301,9 +327,9 @@ class PipelineOrchestrator:
                 if perception_cfg.vision.enabled:
                     seq_modules.append(("vision", lambda: self.vision_processor.process(samples)))
                 if perception_cfg.speech.enabled:
-                    seq_modules.append(("speech", lambda: self.speech_processor.process(samples, descriptor.has_audio)))
+                    seq_modules.append(("speech", lambda: self.speech_processor.process(samples, descriptor.has_audio, mode)))
                 if perception_cfg.ocr.enabled:
-                    seq_modules.append(("ocr", lambda: self.ocr_processor.process(samples)))
+                    seq_modules.append(("ocr", lambda: self.ocr_processor.process(samples, mode)))
 
                 failed_modules = []
                 for proc_name, run in seq_modules:
@@ -333,35 +359,35 @@ class PipelineOrchestrator:
         timeline = self.timeline_builder.build_timeline(observations, descriptor.duration_seconds)
         logger.info(f"Timeline building latency: {time.time() - t0:.2f}s")
 
-        # Step 5: Event Fusion
+        # Step 5: Semantic Contract (Fusion + Graph + Narrative in a single pass)
         t0 = time.time()
-        events = self.fusion_engine.fuse_timeline(timeline)
-        logger.info(f"Fusion engine latency: {time.time() - t0:.2f}s | Fused events: {len(events)}")
-
-        # Step 6: Semantic Graph Building
-        t0 = time.time()
-        graph = self.graph_builder.build_graph(events)
-        logger.info(f"Graph building latency: {time.time() - t0:.2f}s | Graph nodes: {len(graph.nodes)} | Edges: {len(graph.edges)}")
-
-        # Step 7: Narrative Builder (Cached)
-        t0 = time.time()
-        narrative_extra_cfg = {
-            "events": [e.model_dump() for e in events],
+        contract_extra_cfg = {
+            "observations": [o.model_dump() for o in observations],
             "model": self.config.models.llm.model
         }
-        narrative_key = get_cache_key(video_path, "narrative", narrative_extra_cfg)
-        cached_narrative = load_from_cache(narrative_key)
+        contract_key = get_cache_key(video_path, "contract", contract_extra_cfg)
+        cached_contract = load_from_cache(contract_key)
 
-        if cached_narrative is not None:
-            logger.info("Retrieved narrative from cache.")
-            narrative = Narrative(**cached_narrative)
+        if cached_contract is not None:
+            logger.info("Retrieved Semantic Contract output from cache.")
+            events = [Event(**e) for e in cached_contract["events"]]
+            graph = SemanticGraph(**cached_contract["graph"])
+            narrative = Narrative(**cached_contract["narrative"])
         else:
-            narrative = self.narrative_builder.build_narrative(graph)
-            save_to_cache(narrative_key, narrative.model_dump())
+            if not hasattr(self, "semantic_contract_resolver"):
+                from src.fusion.semantic_contract import SemanticContractResolver
+                self.semantic_contract_resolver = SemanticContractResolver(llm_provider=self.llm_provider)
+            
+            events, graph, narrative = self.semantic_contract_resolver.resolve(timeline)
+            save_to_cache(contract_key, {
+                "events": [e.model_dump() for e in events],
+                "graph": graph.model_dump(),
+                "narrative": narrative.model_dump()
+            })
 
-        logger.info(f"Narrative building latency: {time.time() - t0:.2f}s | Words: {len(narrative.text.split())}")
+        logger.info(f"Semantic Contract resolution latency: {time.time() - t0:.2f}s | Events: {len(events)}")
 
-        # Step 8: Styled Caption Generation & Semantic Validation Retry Loop
+        # Step 6: Styled Caption Generation & Semantic Validation Retry Loop
         t0 = time.time()
         val_cfg = self.config.pipeline.validation
         max_attempts = val_cfg.max_retries + 1 if val_cfg.enabled and val_cfg.retry_on_failure else 1
@@ -393,14 +419,24 @@ class PipelineOrchestrator:
                         f"Semantic validation failed on attempt {attempt}. "
                         f"Hallucination count: {report.hallucination_count}, Consistency score: {report.consistency_score}"
                     )
-                    if attempt < max_attempts:
+                    
+                    # Verify if validation retry is permitted by BatchScheduler
+                    allow_retry = True
+                    if scheduler is not None:
+                        allow_retry = scheduler.can_retry(mode)
+
+                    if attempt < max_attempts and allow_retry:
                         logger.info("Retrying caption generation...")
                     else:
-                        logger.error("Max validation attempts reached. Fail-closed: raising ValidationError.")
-                        raise ValidationError(
-                            f"Semantic validation failed with status {report.status} after {max_attempts} attempts. "
-                            f"Hallucinations: {report.hallucination_count}, consistency score: {report.consistency_score}"
-                        )
+                        if scheduler is not None and not allow_retry:
+                            logger.warning("Retry budget exhausted or denied by BatchScheduler. Accepting current captions.")
+                        else:
+                            logger.error("Max validation attempts reached. Fail-closed: raising ValidationError.")
+                            raise ValidationError(
+                                f"Semantic validation failed with status {report.status} after {max_attempts} attempts. "
+                                f"Hallucinations: {report.hallucination_count}, consistency score: {report.consistency_score}"
+                            )
+                        break
             else:
                 ejr_markdown = self.build_ejr(events, observations)
                 # Still enrich basic narrative/EJR explainability when validation is disabled
@@ -473,6 +509,9 @@ class PipelineOrchestrator:
             List of formatted competition dictionaries.
         """
         import json
+        import time
+        from src.orchestration.scheduler import BatchScheduler
+
         checkpoint_path = output_path + ".checkpoint"
         formatted_results: List[Dict[str, str]] = []
         completed_ids = set()
@@ -489,18 +528,42 @@ class PipelineOrchestrator:
             except Exception as e:
                 logger.warning(f"Failed to load checkpoint file {checkpoint_path}: {e}. Starting fresh.")
 
+        # Initialize Batch Scheduler
+        scheduler = BatchScheduler()
+        scheduler.start_batch(total_videos=len(video_paths))
+        # Account for resumed completed videos in scheduler
+        for _ in completed_ids:
+            scheduler.register_completed(elapsed=30.0, api_calls=2, tokens=200)
+
         for video_path in video_paths:
             video_id = os.path.splitext(os.path.basename(video_path))[0]
             if video_id in completed_ids:
                 logger.info(f"Skipping video {video_id} (already present in checkpoint).")
                 continue
 
-            logger.info(f"Batch processing video: {video_id}")
+            # Decide mode based on remaining runtime
+            mode = scheduler.decide_execution_mode()
+            logger.info(f"Batch processing video: {video_id} using mode {mode}")
+            
+            t_start = time.time()
             try:
-                captions = self.process_video(video_path)
+                import inspect
+                sig = inspect.signature(self.process_video)
+                kwargs = {}
+                if "mode" in sig.parameters:
+                    kwargs["mode"] = mode
+                if "scheduler" in sig.parameters:
+                    kwargs["scheduler"] = scheduler
+                captions = self.process_video(video_path, **kwargs)
                 formatted = self.submission_formatter.format_video_captions(video_id, captions)
                 formatted_results.append(formatted)
                 completed_ids.add(video_id)
+
+                elapsed = time.time() - t_start
+                # Fallback telemetry registration
+                api_calls = getattr(self.llm_provider, "api_calls_count", 2)
+                tokens = getattr(self.llm_provider, "tokens_count", 200)
+                scheduler.register_completed(elapsed, api_calls, tokens)
 
                 # Save checkpoint after each successful process
                 try:
@@ -514,6 +577,7 @@ class PipelineOrchestrator:
 
             except Exception as e:
                 logger.error(f"Pipeline failed to process video {video_path}: {e}. Continuing with remaining videos in batch.")
+                scheduler.register_failure()
 
         # Save all accumulated results to the final submission file
         self.submission_formatter.write_submission(formatted_results, output_path)

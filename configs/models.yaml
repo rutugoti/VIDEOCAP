@@ -9,7 +9,7 @@ vision:
   temperature: 0.2
 
 speech:
-  provider: ["groq", "openai", "fireworks"]
+  provider: ["groq", "fireworks"]
   model: "whisper-large-v3"
   language: "en"
 

@@ -22,17 +22,22 @@ class SpeechProcessor:
             language="en"
         )
 
-    def process(self, samples: List[Sample], has_audio: bool = True) -> List[Observation]:
+    def process(self, samples: List[Sample], has_audio: bool = True, mode: str = "DEEP") -> List[Observation]:
         """
         Transcribe audio segments from the sample list and return speech observations.
 
         Args:
             samples: List of Sample objects.
             has_audio: Flag indicating if the video track has audio.
+            mode: Execution mode ('FAST', 'BALANCED', 'DEEP').
 
         Returns:
             List of audio Observation objects sorted by timestamp.
         """
+        if mode == "FAST":
+            logger.info("SpeechProcessor: FAST mode active. Skipping speech processing completely.")
+            return []
+
         if not has_audio or not samples:
             logger.info("SpeechProcessor: Skipping transcription (no audio track or no samples).")
             return []
