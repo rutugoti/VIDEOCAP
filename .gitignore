@@ -58,3 +58,19 @@ Thumbs.db
 *.json
 
 *.mmd   
+
+# Runtime uploads
+uploads/
+
+# Sample/demo videos
+dashboard/*.mp4
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Node modules
+dashboard/node_modules/
+
+# Build outputs
+dashboard/dist/

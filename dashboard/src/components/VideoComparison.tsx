@@ -345,7 +345,7 @@ export const VideoComparison: React.FC<VideoComparisonProps> = ({
             <div className="flex items-center space-x-2">
               <BookOpen className="w-4 h-4 text-accentCyan" />
               <span className="text-xs font-mono text-gray-400 uppercase tracking-wider">
-                Gemma Neutral Narrative
+                Semantic Neutral Narrative
               </span>
             </div>
             <p className="text-xs text-gray-300 leading-relaxed font-sans bg-black/30 p-3 rounded-lg border border-white/5">

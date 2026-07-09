@@ -191,95 +191,112 @@ class GroqProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider):
         model_name = config.model_name or self.DEFAULT_VISION_MODEL
         fallbacks = [self.DEFAULT_VISION_MODEL]
 
-        def _process_single(frame: Any) -> List[VisionObservation]:
-            if not getattr(frame, "frame_data", None):
-                return []
+        system_prompt = (
+            "You are an expert video analysis assistant. Analyze the sequence of keyframes and extract observations.\n"
+            "Return a JSON list of objects matching this schema:\n"
+            "[\n"
+            "  {\n"
+            "    \"content\": \"description of what is seen in this frame\",\n"
+            "    \"timestamp\": float (the exact timestamp of the frame this was observed in, e.g. 1.25),\n"
+            "    \"confidence\": float (0.0 to 1.0),\n"
+            "    \"observation_type\": \"object\" | \"action\" | \"scene\" | \"emotion\"\n"
+            "  }\n"
+            "]\n"
+            "Return ONLY the valid JSON list. Do not wrap in markdown or add notes."
+        )
 
+        user_content = [
+            {
+                "type": "text",
+                "text": "You are analyzing a sequence of keyframes from a video. Extract detailed visual observations. Focus on: people, actions, objects, emotions, sequence of events. For each observation, map it to the corresponding timestamp of the frame it was observed in."
+            }
+        ]
+
+        valid_timestamps = []
+        for idx, frame in enumerate(frames):
+            if not getattr(frame, "frame_data", None):
+                continue
             base64_image = base64.b64encode(frame.frame_data).decode("utf-8")
             image_url = f"data:image/jpeg;base64,{base64_image}"
+            valid_timestamps.append(frame.timestamp)
+            user_content.append({"type": "text", "text": f"\n[Frame {idx} at timestamp {frame.timestamp:.2f}s]:"})
+            user_content.append({
+                "type": "image_url",
+                "image_url": {"url": image_url}
+            })
 
-            system_prompt = (
-                "You are an expert video analysis assistant. Analyze the image and extract observations.\n"
-                "Return a JSON list of objects matching this schema:\n"
-                "[\n"
-                "  {\n"
-                "    \"content\": \"description\",\n"
-                "    \"confidence\": float (0.0 to 1.0),\n"
-                "    \"observation_type\": \"object\", \"action\", \"scene\", or \"emotion\"\n"
-                "  }\n"
-                "]"
-            )
+        user_content.append({"type": "text", "text": f"\nPrompt: {prompt}"})
 
-            def _get_api_call(model):
-                def _api_call():
-                    _GROQ_LIMITER.acquire(_IMAGE_TOKEN_ESTIMATE + (config.max_tokens or 1024))
-                    t0 = time.time()
-                    res = self.client.chat.completions.create(
-                        model=model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {
-                                "role": "user",
-                                "content": [
-                                    {"type": "text", "text": prompt},
-                                    {
-                                        "type": "image_url",
-                                        "image_url": {"url": image_url}
-                                    }
-                                ]
-                            }
-                        ],
-                        max_tokens=config.max_tokens or 1024,
-                        temperature=config.temperature or 0.2,
-                        response_format={"type": "json_object"}
-                    )
-                    latency = time.time() - t0
-                    global_cost_tracker.track_call(
-                        provider="groq",
-                        model=model,
-                        prompt_tokens=res.usage.prompt_tokens if res.usage else 0,
-                        completion_tokens=res.usage.completion_tokens if res.usage else 0,
-                        latency=latency
-                    )
-                    return res
-                return _api_call
-
-            try:
-                response, actual_model = self._execute_with_model_fallback(
-                    model_name,
-                    fallbacks,
-                    _get_api_call,
-                    max_retries=config.max_retries or 3
+        def _get_api_call(model):
+            def _api_call():
+                total_image_tokens = len(valid_timestamps) * _IMAGE_TOKEN_ESTIMATE
+                _GROQ_LIMITER.acquire(total_image_tokens + (config.max_tokens or 2048))
+                t0 = time.time()
+                res = self.client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_content}
+                    ],
+                    max_tokens=config.max_tokens or 2048,
+                    temperature=config.temperature or 0.2,
+                    response_format={"type": "json_object"}
                 )
-                text = response.choices[0].message.content.strip()
-                parsed = json.loads(text)
-                if isinstance(parsed, dict):
-                    parsed = [parsed]
-                
-                res_obs = []
-                if isinstance(parsed, list):
-                    for item in parsed:
-                        res_obs.append(
-                            VisionObservation(
-                                content=item.get("content", "unspecified visual observation"),
-                                timestamp=frame.timestamp,
-                                confidence=item.get("confidence", 0.5),
-                                observation_type=item.get("observation_type", "action")
-                            )
-                        )
-                return res_obs
-            except Exception as e:
-                logger.error(f"Groq Vision failed at {frame.timestamp}s: {e}")
-                raise _normalize_groq_error(e) from e
+                latency = time.time() - t0
+                global_cost_tracker.track_call(
+                    provider="groq",
+                    model=model,
+                    prompt_tokens=res.usage.prompt_tokens if res.usage else 0,
+                    completion_tokens=res.usage.completion_tokens if res.usage else 0,
+                    latency=latency
+                )
+                return res
+            return _api_call
 
         try:
-            with ThreadPoolExecutor() as executor:
-                futures = [executor.submit(_process_single, f) for f in frames]
-                for fut in futures:
-                    observations.extend(fut.result())
+            response, actual_model = self._execute_with_model_fallback(
+                model_name,
+                fallbacks,
+                _get_api_call,
+                max_retries=config.max_retries or 3
+            )
+            text = response.choices[0].message.content.strip()
+            from src.shared.fireworks_providers import _parse_and_repair_json
+            parsed = _parse_and_repair_json(text)
+            if isinstance(parsed, dict):
+                parsed = [parsed]
+
+            if isinstance(parsed, list):
+                for item in parsed:
+                    val = item.get("content", "").strip()
+                    if not val:
+                        continue
+
+                    # Align the reported timestamp back to closest valid frame timestamp
+                    t_val = item.get("timestamp")
+                    if t_val is not None:
+                        try:
+                            t_val = float(t_val)
+                            if valid_timestamps:
+                                t_val = min(valid_timestamps, key=lambda x: abs(x - t_val))
+                        except (ValueError, TypeError):
+                            t_val = frames[0].timestamp
+                    else:
+                        t_val = frames[0].timestamp
+
+                    raw_conf = item.get("confidence", 0.5)
+                    observations.append(
+                        VisionObservation(
+                            content=val,
+                            timestamp=t_val,
+                            confidence=raw_conf,
+                            observation_type=item.get("observation_type", "action")
+                        )
+                    )
             return sorted(observations, key=lambda x: x.timestamp)
         except Exception as e:
-            raise ProviderError(f"Groq Vision failed: {e}") from e
+            logger.error(f"Groq Vision provider analysis failed: {e}")
+            raise ProviderError(f"Groq Vision provider analysis failed: {e}") from e
 
     # 2. OCR Adapter
     def extract_text(

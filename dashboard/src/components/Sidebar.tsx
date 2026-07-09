@@ -23,7 +23,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
     { id: "history", label: "Process History", icon: History, desc: "Past caption logs" },
     { id: "metrics", label: "System Metrics", icon: BarChart3, desc: "Inference latency & cost" },
     { id: "settings", label: "Model Config", icon: Settings, desc: "Adjust pipeline details" },
-    { id: "about", label: "Platform Info", icon: Info, desc: "Gemma model overview" },
+    { id: "about", label: "Platform Info", icon: Info, desc: "Llama model overview" },
   ];
 
   return (
@@ -47,7 +47,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
             ANTIGRAVITY
           </span>
           <span className="text-[10px] text-accentCyan font-mono uppercase tracking-widest">
-            Gemma Core v2.0
+            Llama Core v2.0
           </span>
         </motion.div>
       </div>

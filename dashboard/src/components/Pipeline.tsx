@@ -26,14 +26,14 @@ export interface PipelineStage {
 const STAGES: PipelineStage[] = [
   { id: "upload", name: "Upload", desc: "Ingests MP4/MKV video container & validates dimensions/duration", time: "0.2s", model: "Native FFmpeg", icon: UploadCloud },
   { id: "sampling", name: "Sampling", desc: "Uniform/complexity-aware adaptive frame sampling", time: "0.8s", model: "PyAV + Complexity", icon: Layers },
-  { id: "vision", name: "Vision", desc: "VLM detects key frame contents, objects, and actions", time: "1.4s", model: "Gemma-4-31b-it", icon: Eye },
+  { id: "vision", name: "Vision", desc: "VLM detects key frame contents, objects, and actions", time: "1.4s", model: "Llama-4-Scout-17b", icon: Eye },
   { id: "speech", name: "Speech", desc: "Transcribes audio tracks & maps timestamps", time: "2.1s", model: "Whisper-v3", icon: Volume2 },
-  { id: "ocr", name: "OCR", desc: "Extracts video on-screen text overlays", time: "1.1s", model: "Gemma-4-31b-it", icon: Type },
-  { id: "fusion", name: "Fusion", desc: "Groups multi-modal observations into temporal events", time: "0.5s", model: "Gemma-3-27b-it", icon: GitMerge },
+  { id: "ocr", name: "OCR", desc: "Extracts video on-screen text overlays", time: "1.1s", model: "Llama-4-Scout-17b", icon: Type },
+  { id: "fusion", name: "Fusion", desc: "Groups multi-modal observations into temporal events", time: "0.5s", model: "Llama-3.3-70b", icon: GitMerge },
   { id: "graph", name: "Graph", desc: "Constructs semantic relationship graphs of actors & actions", time: "0.2s", model: "NetworkX Builder", icon: Network },
-  { id: "narrative", name: "Narrative", desc: "Generates factually-grounded, style-neutral text summary", time: "1.2s", model: "Gemma-3-27b-it", icon: BookOpen },
-  { id: "gemma", name: "Gemma Engine", desc: "Runs Draft-Critique-Rewrite styled captions loop", time: "2.4s", model: "Gemma-3-27b-it", icon: Cpu },
-  { id: "validation", name: "Validation", desc: "Enforces pass/fail rules against hallucinations & drift", time: "1.6s", model: "Gemma-3-27b-it", icon: ShieldAlert },
+  { id: "narrative", name: "Narrative", desc: "Generates factually-grounded, style-neutral text summary", time: "1.2s", model: "Llama-3.3-70b", icon: BookOpen },
+  { id: "generation", name: "Captioner", desc: "Runs single-pass styled captions generation", time: "2.4s", model: "Llama-3.3-70b", icon: Cpu },
+  { id: "validation", name: "Validation", desc: "Enforces pass/fail rules against hallucinations & drift", time: "1.6s", model: "Llama-3.3-70b", icon: ShieldAlert },
   { id: "submission", name: "Submission", desc: "Formats validated captions into final submission JSON", time: "0.1s", model: "Formatter", icon: CheckCircle2 },
 ];
 
@@ -82,7 +82,7 @@ export const Pipeline: React.FC<PipelineProps> = ({ currentStage, status }) => {
           </span>
         </div>
         <div className="text-[10px] font-mono text-gray-500">
-          PROCESSED_VIA_GEMMA_NATIVE
+          PROCESSED_VIA_LLAMA_NATIVE
         </div>
       </div>
 

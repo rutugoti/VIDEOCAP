@@ -32,8 +32,8 @@ export const App: React.FC = () => {
   const [jobState, setJobState] = useState<any | null>(null);
 
   // Model settings UI states (synchronized locally for view settings panel)
-  const [llmModelName, setLlmModelName] = useState<string>("accounts/fireworks/models/gemma-3-27b-it");
-  const [visionModelName, setVisionModelName] = useState<string>("accounts/fireworks/models/gemma-4-31b-it");
+  const [llmModelName, setLlmModelName] = useState<string>("llama-3.3-70b-versatile");
+  const [visionModelName, setVisionModelName] = useState<string>("meta-llama/llama-4-scout-17b-16e-instruct");
   const [sampleFps, setSampleFps] = useState<number>(1.0);
   const [maxFrames, setMaxFrames] = useState<number>(30);
   const [validationRetry, setValidationRetry] = useState<boolean>(true);
@@ -186,7 +186,7 @@ export const App: React.FC = () => {
                               jobState.current_stage === "fusion" ? 54 :
                               jobState.current_stage === "graph" ? 63 :
                               jobState.current_stage === "narrative" ? 72 :
-                              jobState.current_stage === "gemma" ? 81 :
+                              jobState.current_stage === "generation" ? 81 :
                               jobState.current_stage === "validation" ? 90 : 100
                             }%` 
                           }}
@@ -363,7 +363,7 @@ export const App: React.FC = () => {
                 <span className="text-[10px] uppercase text-gray-500 font-mono tracking-wider">Average Latency</span>
                 <span className="text-2xl font-extrabold text-white">12.4s</span>
                 <p className="text-[10px] text-gray-400 leading-relaxed font-mono">
-                  Includes uniform adaptive sampling (1.0s), multithreaded perception layers (3.8s), event graph construction (0.4s), and Gemma styled rewrite loop (7.2s).
+                  Includes uniform adaptive sampling (1.0s), multithreaded perception layers (3.8s), event graph construction (0.4s), and Llama styled rewrite loop (7.2s).
                 </p>
               </div>
 
@@ -379,7 +379,7 @@ export const App: React.FC = () => {
                 <span className="text-[10px] uppercase text-gray-500 font-mono tracking-wider">Accumulated Cost</span>
                 <span className="text-2xl font-extrabold text-accentPurple-light">$0.042</span>
                 <p className="text-[10px] text-gray-400 leading-relaxed font-mono">
-                  Based on Fireworks Gemma-3-27b-it ($0.0005 per 1k input tokens) and Whisper audio transcription endpoints. Highly cost-effective.
+                  Based on Llama-3.3-70b-versatile and Whisper audio transcription endpoints. Highly cost-effective.
                 </p>
               </div>
             </div>
@@ -397,7 +397,7 @@ export const App: React.FC = () => {
               {/* Models */}
               <div className="space-y-4">
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono">
-                  Gemma Core Engines
+                  Llama Core Engines
                 </h3>
 
                 <div className="flex flex-col space-y-2">
@@ -407,9 +407,8 @@ export const App: React.FC = () => {
                     onChange={(e) => setLlmModelName(e.target.value)}
                     className="glass-input p-3 rounded-xl text-xs text-white"
                   >
-                    <option value="accounts/fireworks/models/gemma-3-27b-it">Gemma-3-27b-it (128k context)</option>
-                    <option value="accounts/fireworks/models/gemma-3-9b-it">Gemma-3-9b-it (128k context)</option>
-                    <option value="accounts/fireworks/models/llama-3.1-70b-instruct">Llama-3.1-70b-instruct (Fallback)</option>
+                    <option value="llama-3.3-70b-versatile">Llama-3.3-70b-Versatile</option>
+                    <option value="llama-3.1-8b-instant">Llama-3.1-8b-Instant (Fallback)</option>
                   </select>
                 </div>
 
@@ -420,8 +419,8 @@ export const App: React.FC = () => {
                     onChange={(e) => setVisionModelName(e.target.value)}
                     className="glass-input p-3 rounded-xl text-xs text-white"
                   >
-                    <option value="accounts/fireworks/models/gemma-4-31b-it">Gemma-4-31b-it (Multimodal)</option>
-                    <option value="accounts/fireworks/models/florence-2-base">Florence-2-base (Local)</option>
+                    <option value="meta-llama/llama-4-scout-17b-16e-instruct">Llama-4-Scout-17b</option>
+                    <option value="accounts/fireworks/models/llama-3.2-11b-vision-instruct">Llama-3.2-11b-Vision</option>
                   </select>
                 </div>
               </div>
@@ -481,12 +480,12 @@ export const App: React.FC = () => {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-xs leading-relaxed text-gray-400">
               <div className="space-y-4">
-                <h3 className="text-sm font-bold text-white font-mono uppercase">Why Gemma?</h3>
+                <h3 className="text-sm font-bold text-white font-mono uppercase">Why Llama?</h3>
                 <p>
-                  Our architecture leverages Google's **Gemma** family of open models to handle the core language reasonings and multimodal tasks of the Video Captioning Pipeline. Gemma-3-27b-it acts as the primary brain, executing event timeline fusion, narrative building, and final caption generation using a Draft-Critique-Rewrite critique loop.
+                  Our architecture leverages the **Llama** family of open models to handle the core language reasoning and multimodal tasks of the Video Captioning Pipeline. Llama-3.3-70b-versatile acts as the primary brain, executing event timeline fusion, narrative building, and final caption generation using a unified Semantic Contract.
                 </p>
                 <p>
-                  By utilizing Gemma's advanced reasoning capabilities, the system accurately generates captions within the strict 15-35 word limit across four complex styles (Formal, Sarcastic, Humorous Tech, Humorous Non-Tech) while eliminating hallucinations.
+                  By utilizing Llama's advanced reasoning capabilities, the system accurately generates captions within the strict 15-35 word limit across four complex styles (Formal, Sarcastic, Humorous Tech, Humorous Non-Tech) while eliminating hallucinations.
                 </p>
               </div>
 

@@ -363,7 +363,12 @@ def run_pipeline_thread(job_id: str, file_path: str):
         t_stage = time.time()
         update_job("fusion", "running", current_model="TimelineBuilder", current_provider="System", current_worker="FusionWorker")
         timeline = orchestrator.timeline_builder.build_timeline(observations, descriptor.duration_seconds)
-        events = orchestrator.fusion_engine.fuse_timeline(timeline)
+        
+        if not hasattr(orchestrator, "semantic_contract_resolver"):
+            from src.fusion.semantic_contract import SemanticContractResolver
+            orchestrator.semantic_contract_resolver = SemanticContractResolver(llm_provider=orchestrator.llm_provider)
+            
+        events, graph, narrative = orchestrator.semantic_contract_resolver.resolve(timeline)
         
         # Estimate fusion tokens
         job_state["token_usage"] += 1200
@@ -382,7 +387,6 @@ def run_pipeline_thread(job_id: str, file_path: str):
         # Step 7: Graph Builder
         t_stage = time.time()
         update_job("graph", "running", current_model="NetworkX Builder", current_provider="System", current_worker="GraphWorker")
-        graph = orchestrator.graph_builder.build_graph(events)
         
         timeline_entry = {
             "stage": "graph",
@@ -398,7 +402,6 @@ def run_pipeline_thread(job_id: str, file_path: str):
         # Step 8: Narrative Builder
         t_stage = time.time()
         update_job("narrative", "running", current_model=config.models.llm.model, current_provider=provider_name, current_worker="NarrativeWorker")
-        narrative = orchestrator.narrative_builder.build_narrative(graph)
         job_state["narrative"] = narrative.text
         job_state["token_usage"] += 800
         
@@ -413,14 +416,14 @@ def run_pipeline_thread(job_id: str, file_path: str):
         job_state["timeline"].append(timeline_entry)
         update_job("narrative", "completed")
 
-        # Step 9: Gemma Styled Captions
+        # Step 9: Styled Captions Generation
         t_stage = time.time()
-        update_job("gemma", "running", current_model=config.models.llm.model, current_provider=provider_name, current_worker="GemmaStyleWorker")
+        update_job("generation", "running", current_model=config.models.llm.model, current_provider=provider_name, current_worker="StyleGeneratorWorker")
         captions = orchestrator.style_generator.generate_captions(narrative)
         job_state["token_usage"] += 1500
         
         timeline_entry = {
-            "stage": "gemma",
+            "stage": "generation",
             "start_time": round(t_stage - start_time, 2),
             "end_time": round(time.time() - start_time, 2),
             "duration": round(time.time() - t_stage, 2),
@@ -428,12 +431,15 @@ def run_pipeline_thread(job_id: str, file_path: str):
             "status": "completed"
         }
         job_state["timeline"].append(timeline_entry)
-        update_job("gemma", "completed")
+        update_job("generation", "completed")
 
         # Step 10: Validation
         t_stage = time.time()
         update_job("validation", "running", current_model=config.models.validator.model, current_provider=provider_name, current_worker="ValidatorWorker")
-        report = orchestrator.validator.validate(captions, narrative)
+        report = orchestrator.validator.validate(
+            captions,
+            narrative
+        )
         
         # Calculate average semantic accuracy and hallucination risk from per-caption report details
         avg_accuracy = 1.0
