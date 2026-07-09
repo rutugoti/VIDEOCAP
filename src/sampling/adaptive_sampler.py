@@ -1,6 +1,5 @@
 import io
 import logging
-import time
 import wave
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
@@ -22,14 +21,7 @@ class AdaptiveSampler:
     - Visual motion complexity (motion peaks)
     - Dynamic allocation of frame sampling budget
     - Audio silence/speech detection (disabling audio transcription for silent segments)
-    
-    Optimized to decode the video in a SINGLE pass, performing complexity estimation,
-    scene detection, and frame/audio extraction simultaneously.
     """
-
-    # Downscale target for analysis frames (grayscale, small) to speed up numpy ops
-    _ANALYSIS_WIDTH = 160
-    _ANALYSIS_HEIGHT = 120
 
     def __init__(
         self,
@@ -222,132 +214,12 @@ class AdaptiveSampler:
             logger.warning(f"Error computing audio silence: {e}")
             return False
 
-    # ==========================================================================
-    # Single-Pass Analysis Engine
-    # ==========================================================================
-
-    def _single_pass_analysis(self, video_path: str, duration: float) -> Dict[str, Any]:
-        """
-        Decode the video ONCE and compute all analysis data simultaneously:
-        - complexity score
-        - scene boundaries
-        - per-frame timestamps and motion diffs (for scene_change mode peak selection)
-
-        Returns a dict with keys:
-            complexity: float
-            scene_boundaries: List[float]
-            frame_times: List[float]   (timestamps of analyzed frames)
-            frame_diffs: List[float]   (inter-frame motion for each analyzed frame)
-        """
-        t0 = time.time()
-        complexity = 0.5
-        boundaries = [0.0]
-        frame_times: List[float] = []
-        frame_diffs: List[float] = []
-
-        try:
-            with av.open(video_path) as container:
-                video_streams = container.streams.video
-                if not video_streams:
-                    logger.warning("No video stream found during single-pass analysis.")
-                    return {
-                        "complexity": complexity,
-                        "scene_boundaries": boundaries,
-                        "frame_times": frame_times,
-                        "frame_diffs": frame_diffs,
-                    }
-
-                video_stream = video_streams[0]
-                # Configure the codec context to use multiple threads for decoding
-                video_stream.thread_type = "AUTO"
-
-                prev_gray: Optional[np.ndarray] = None
-                last_boundary_time = 0.0
-                decoded = 0
-                complexity_diffs: List[float] = []
-
-                for frame in container.decode(video_stream):
-                    pts_time = (
-                        float(frame.pts * frame.time_base)
-                        if frame.pts is not None
-                        else float(decoded / (video_stream.average_rate or 30))
-                    )
-
-                    # Convert to small grayscale for fast analysis.
-                    # PyAV's reformat is backed by libswscale — much faster than
-                    # frame.to_image().convert("L") which goes through PIL.
-                    gray_frame = frame.reformat(
-                        width=self._ANALYSIS_WIDTH,
-                        height=self._ANALYSIS_HEIGHT,
-                        format="gray"
-                    )
-                    arr = np.frombuffer(gray_frame.planes[0], dtype=np.uint8).reshape(
-                        self._ANALYSIS_HEIGHT, self._ANALYSIS_WIDTH
-                    )
-
-                    if prev_gray is not None:
-                        diff = float(np.mean(np.abs(
-                            arr.astype(np.int16) - prev_gray.astype(np.int16)
-                        )))
-
-                        # Record for scene_change peak selection
-                        frame_times.append(pts_time)
-                        frame_diffs.append(diff)
-
-                        # Scene boundary detection
-                        if diff > self.scene_change_threshold:
-                            if pts_time - last_boundary_time >= self.min_scene_duration:
-                                boundaries.append(pts_time)
-                                last_boundary_time = pts_time
-
-                        # Accumulate complexity samples (subsample for efficiency)
-                        if decoded % 5 == 0:
-                            complexity_diffs.append(diff)
-
-                    prev_gray = arr
-                    decoded += 1
-                    # Cap analysis frames (same cap as original detect_scene_boundaries)
-                    if decoded >= 1200:
-                        break
-
-                # Compute complexity score
-                if complexity_diffs:
-                    avg_diff = sum(complexity_diffs) / len(complexity_diffs)
-                    complexity = min(1.0, max(0.0, avg_diff / self.motion_threshold))
-                    logger.info(f"Single-pass complexity: avg_diff={avg_diff:.2f}, score={complexity:.2f}")
-
-        except Exception as e:
-            logger.warning(f"Single-pass analysis failed: {e}. Using defaults.")
-
-        elapsed = time.time() - t0
-        logger.info(
-            f"Single-pass analysis complete in {elapsed:.2f}s | "
-            f"Complexity={complexity:.2f} | Scenes={len(boundaries)} | "
-            f"Frames analyzed={len(frame_diffs)}"
-        )
-
-        return {
-            "complexity": complexity,
-            "scene_boundaries": boundaries,
-            "frame_times": frame_times,
-            "frame_diffs": frame_diffs,
-        }
-
-    # ==========================================================================
-    # Main entry point
-    # ==========================================================================
-
     def sample_video(self, video_desc: VideoDescriptor) -> List[Sample]:
         """
         Perform dynamic content-aware frame and audio sampling.
-        
-        Optimized to perform analysis in a single decode pass, then extract
-        frames and audio in one final pass — reducing total decodes from 3 to 2
-        (analysis + extraction), or from 2 to 1 for uniform mode.
         """
         video_path = video_desc.path
         duration = video_desc.duration_seconds
-        t_total = time.time()
 
         # Backward compatibility check for uniform method
         if self.method == "uniform":
@@ -356,45 +228,37 @@ class AdaptiveSampler:
             interval = duration / num_samples
             target_timestamps = [i * interval for i in range(num_samples)]
             logger.info(f"Uniform sampling: {num_samples} frames.")
-
         elif self.method == "scene_change":
-            # Single pass gets complexity + scene data + diffs for peak selection
-            analysis = self._single_pass_analysis(video_path, duration)
-            complexity = analysis["complexity"]
+            complexity = self.estimate_complexity(video_path)
             range_frames = self.max_frames - self.min_frames
             num_samples = int(self.min_frames + complexity * range_frames)
             num_samples = max(self.min_frames, min(self.max_frames, num_samples))
-
-            # Use already-computed diffs for peak timestamp selection
-            target_timestamps = self._select_peak_timestamps(
-                analysis["frame_times"], analysis["frame_diffs"], num_samples, duration
-            )
+            target_timestamps = self._scene_change_timestamps(video_path, num_samples, duration)
             logger.info(f"Scene change sampling: {num_samples} frames.")
-
         else:
-            # Adaptive mode: single pass for complexity + scene boundaries
-            analysis = self._single_pass_analysis(video_path, duration)
-            complexity = analysis["complexity"]
-
             # 1. Determine Dynamic Frame Budget
+            complexity = self.estimate_complexity(video_path)
             range_frames = self.max_frames - self.min_frames
+            
+            # Scale target frames based on complexity and video duration
             if duration <= 10.0:
-                target_frames = max(self.min_frames, int(duration * 2.0))
+                target_frames = max(self.min_frames, int(duration * 2.0))  # higher density for short clips
             else:
                 target_frames = int(self.min_frames + complexity * range_frames)
+                
             target_frames = max(self.min_frames, min(self.max_frames, target_frames))
-
+            
             logger.info(
                 f"AdaptiveSampler: Ingesting '{Path(video_path).name}' ({duration:.2f}s) | "
                 f"Complexity={complexity:.2f} | Dynamic Target Frames={target_frames}"
             )
 
-            # 2. Scene Boundary Detection (already computed)
-            scene_boundaries = analysis["scene_boundaries"]
-            scene_boundaries.append(duration)
+            # 2. Scene Boundary Detection
+            scene_boundaries = self.detect_scene_boundaries(video_path, duration)
+            scene_boundaries.append(duration)  # cap end
             scene_boundaries = sorted(list(set(scene_boundaries)))
 
-            # Construct scene intervals
+            # Construct scene intervals: list of (start_time, end_time)
             intervals = []
             for i in range(len(scene_boundaries) - 1):
                 intervals.append((scene_boundaries[i], scene_boundaries[i+1]))
@@ -402,11 +266,13 @@ class AdaptiveSampler:
             # 3. Budget Allocation across Scenes
             allocations = []
             total_len = sum(end - start for start, end in intervals)
+            
             for start, end in intervals:
                 ratio = (end - start) / (total_len + 1e-9)
                 allocated = int(round(ratio * target_frames))
                 allocations.append(max(1, allocated))
 
+            # Adjust total sum to match target_frames if possible
             while sum(allocations) > target_frames and any(a > 1 for a in allocations):
                 idx = allocations.index(max(allocations))
                 allocations[idx] -= 1
@@ -428,49 +294,23 @@ class AdaptiveSampler:
             num_samples = len(target_timestamps)
             logger.info(f"Target keyframe timestamps: {['%.2f' % t for t in target_timestamps]}")
 
-        # 5. Extract Frames and Audio segments (single extraction pass)
-        t_extract = time.time()
-        samples = self._extract_samples(
-            video_path, target_timestamps, num_samples, duration, video_desc.has_audio
-        )
-        logger.info(f"Frame/audio extraction latency: {time.time() - t_extract:.2f}s")
-        logger.info(
-            f"Total sampling latency: {time.time() - t_total:.2f}s | "
-            f"Samples generated: {len(samples)}"
-        )
-        return samples
-
-    def _extract_samples(
-        self,
-        video_path: str,
-        target_timestamps: List[float],
-        num_samples: int,
-        duration: float,
-        has_audio_flag: bool,
-    ) -> List[Sample]:
-        """
-        Extract frame images and audio segments in a single demux pass.
-        Matches decoded frames to the nearest target timestamp slot.
-        """
-        interval_val = duration / num_samples if num_samples > 0 else duration
+        # 5. Extract Frames and Audio segments
         samples: List[Sample] = []
-
+        interval_val = duration / num_samples
         try:
             with av.open(video_path) as container:
                 video_streams = container.streams.video
                 if not video_streams:
                     raise ValueError(f"No video stream found in {video_path}")
                 video_stream = video_streams[0]
-                # Enable multi-threaded decoding
-                video_stream.thread_type = "AUTO"
 
                 audio_streams = container.streams.audio
-                has_audio = len(audio_streams) > 0 and has_audio_flag
+                has_audio = len(audio_streams) > 0 and video_desc.has_audio
                 audio_stream = audio_streams[0] if has_audio else None
 
                 frames_data: List[Optional[bytes]] = [None] * num_samples
                 audio_buffers: List[List[Tuple[bytes, int]]] = [[] for _ in range(num_samples)]
-
+                
                 audio_sample_rate = 16000
                 audio_channels = 1
                 audio_sample_width = 2
@@ -485,11 +325,8 @@ class AdaptiveSampler:
                     elif "u8" in audio_stream.format.name:
                         audio_sample_width = 1
 
-                # Pre-compute a sorted array of target timestamps for fast lookup
-                ts_array = np.array(target_timestamps)
-                filled_count = 0
-
                 # Demux and decode streams
+                decoded = 0
                 for packet in container.demux():
                     if packet.stream.type not in ("video", "audio"):
                         continue
@@ -505,56 +342,38 @@ class AdaptiveSampler:
                         pts_time = float(frame.pts * frame.time_base) if frame.pts is not None else 0.0
 
                         if isinstance(frame, av.VideoFrame):
-                            # Fast closest-index lookup via numpy searchsorted
+                            # Map to closest target timestamp index
                             if self.method == "uniform":
                                 closest_idx = int(round(pts_time / interval_val))
                             else:
-                                idx = np.searchsorted(ts_array, pts_time)
-                                # Compare with neighbors to find true closest
-                                if idx == 0:
-                                    closest_idx = 0
-                                elif idx >= num_samples:
-                                    closest_idx = num_samples - 1
-                                else:
-                                    if abs(ts_array[idx - 1] - pts_time) <= abs(ts_array[idx] - pts_time):
-                                        closest_idx = idx - 1
-                                    else:
-                                        closest_idx = idx
-
+                                closest_idx = min(
+                                    range(num_samples),
+                                    key=lambda k: abs(target_timestamps[k] - pts_time),
+                                )
+                            
                             if 0 <= closest_idx < num_samples:
                                 if frames_data[closest_idx] is None:
-                                    # Resize using PyAV's libswscale (much faster than PIL)
-                                    w = frame.width
-                                    if w > 600:
-                                        new_width = 600
-                                        new_height = int(frame.height * (new_width / w))
-                                        frame = frame.reformat(width=new_width, height=new_height)
-
                                     img = frame.to_image()
+                                    # Scale down if width exceeds 600px to optimize API payloads
+                                    if img.width > 600:
+                                        import PIL.Image
+                                        new_width = 600
+                                        new_height = int(img.height * (new_width / img.width))
+                                        # Use standard LANCZOS resizing
+                                        img = img.resize((new_width, new_height), PIL.Image.Resampling.LANCZOS)
                                     buf = io.BytesIO()
                                     img.save(buf, format="JPEG")
                                     frames_data[closest_idx] = buf.getvalue()
-                                    filled_count += 1
-
-                                    # Early exit if all slots are filled and no audio needed
-                                    if filled_count >= num_samples and not has_audio:
-                                        break
 
                         elif isinstance(frame, av.AudioFrame) and has_audio:
+                            # Map audio segment to closest target timestamp window
                             if self.method == "uniform":
                                 idx = int(pts_time / interval_val)
                             else:
-                                si = np.searchsorted(ts_array, pts_time)
-                                if si == 0:
-                                    idx = 0
-                                elif si >= num_samples:
-                                    idx = num_samples - 1
-                                else:
-                                    if abs(ts_array[si - 1] - pts_time) <= abs(ts_array[si] - pts_time):
-                                        idx = si - 1
-                                    else:
-                                        idx = si
-
+                                idx = min(
+                                    range(num_samples),
+                                    key=lambda k: abs(target_timestamps[k] - pts_time),
+                                )
                             if 0 <= idx < num_samples:
                                 plane_bytes = frame.to_ndarray().tobytes()
                                 audio_buffers[idx].append((plane_bytes, frame.samples))
@@ -581,7 +400,7 @@ class AdaptiveSampler:
                     wav_bytes = None
                     if has_audio and audio_buffers[i]:
                         combined_audio = b"".join([item[0] for item in audio_buffers[i]])
-
+                        
                         # Apply Silence Detection only if NOT uniform method
                         if self.method != "uniform" and self.is_silent(combined_audio, audio_sample_width):
                             logger.info(f"Silence detected at window {i} (timestamp {timestamp:.2f}s). Skipping audio transcription.")
