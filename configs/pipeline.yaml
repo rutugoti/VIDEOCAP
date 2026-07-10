@@ -5,7 +5,7 @@ sampling:
   # Frame count is capped low to stay within Groq's free-tier tokens-per-minute
   # budget (vision + OCR each send one image per frame). Raise these if you have a
   # higher-throughput key.
-  max_frames: 6
+  max_frames: 5
   min_frames: 4
   baseline_fps: 1.0
   min_scene_duration: 1.0
@@ -13,12 +13,12 @@ sampling:
   scene_change_threshold: 20.0
   silence_threshold: -40.0 # dB
   adaptive_sampling_limits:
-    max_samples: 6
+    max_samples: 5
     min_samples: 4
 
 perception:
   parallel: true
-  timeout_seconds: 180
+  timeout_seconds: 45
   max_workers: 3
   vision:
     enabled: true
@@ -39,7 +39,7 @@ graph:
 
 narrative:
   max_events: 10
-  max_words: 100
+  max_words: 200
   consume_edges: true
 
 generation:
@@ -48,8 +48,8 @@ generation:
     - sarcastic
     - tech_humor
     - non_tech_humor
-  max_caption_words: 35
-  min_caption_words: 10
+  max_caption_words: 70
+  min_caption_words: 50
   single_pass: true
   style_separation_min: 0.5
 

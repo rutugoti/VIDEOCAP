@@ -167,3 +167,41 @@ def test_groq_provider():
     assert len(obs) > 0
     assert obs[0].content == "mocked vision obs"
 
+
+def test_provider_wrapped_json_parsing():
+    from src.providers.groq_provider import GroqProvider
+    from src.providers.base import ProviderConfig
+    from unittest.mock import MagicMock
+
+    provider = GroqProvider(api_key="mock_key_for_testing")
+    config = ProviderConfig(provider_name="groq", model_name="llama-3.3-70b-versatile")
+
+    # 1. Test wrapped Vision observations parsing
+    mock_chat_completion_vision = MagicMock()
+    mock_chat_completion_vision.choices = [
+        MagicMock(message=MagicMock(content='{\n  "observations": [\n    {\n      "content": "wrapped vision obs",\n      "timestamp": 0.0,\n      "confidence": 0.85,\n      "observation_type": "action"\n    }\n  ]\n}'))
+    ]
+    mock_chat_completion_vision.usage = MagicMock(prompt_tokens=15, completion_tokens=25)
+    provider.client.chat.completions.create = MagicMock(return_value=mock_chat_completion_vision)
+
+    frames = [Sample(frame_data=b"f1", timestamp=0.0, sample_index=0)]
+    obs = provider.analyze_frames(frames, "test prompt", config)
+    assert len(obs) == 1
+    assert obs[0].content == "wrapped vision obs"
+    assert obs[0].confidence == 0.85
+    assert obs[0].observation_type == "action"
+
+    # 2. Test wrapped OCR detections parsing
+    mock_chat_completion_ocr = MagicMock()
+    mock_chat_completion_ocr.choices = [
+        MagicMock(message=MagicMock(content='{\n  "text_detections": [\n    {\n      "text": "wrapped ocr text",\n      "confidence": 0.9\n    }\n  ]\n}'))
+    ]
+    mock_chat_completion_ocr.usage = MagicMock(prompt_tokens=15, completion_tokens=25)
+    provider.client.chat.completions.create = MagicMock(return_value=mock_chat_completion_ocr)
+
+    ocr_obs = provider.extract_text(frames, config)
+    assert len(ocr_obs) == 1
+    assert ocr_obs[0].content == "wrapped ocr text"
+    assert ocr_obs[0].confidence == 0.9
+
+

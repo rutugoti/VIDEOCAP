@@ -65,7 +65,7 @@ class AdaptiveSampler:
                 for i, frame in enumerate(container.decode(video_stream)):
                     if i % 5 != 0:
                         continue
-                    img = frame.to_image().convert("L")
+                    img = frame.to_image().resize((160, 90)).convert("L")
                     arr = np.array(img)
                     if prev_gray is not None:
                         diff = float(np.mean(np.abs(arr.astype(np.int16) - prev_gray.astype(np.int16))))
@@ -105,7 +105,7 @@ class AdaptiveSampler:
 
                 for frame in container.decode(video_stream):
                     pts_time = float(frame.pts * frame.time_base) if frame.pts is not None else float(decoded / video_stream.average_rate)
-                    img = frame.to_image().convert("L")
+                    img = frame.to_image().resize((160, 90)).convert("L")
                     arr = np.array(img, dtype=np.int16)
 
                     if prev_gray is not None:
@@ -145,7 +145,7 @@ class AdaptiveSampler:
                 decoded = 0
                 for frame in container.decode(video_stream):
                     pts_time = float(frame.pts * frame.time_base) if frame.pts is not None else float(decoded)
-                    arr = np.array(frame.to_image().convert("L"), dtype=np.int16)
+                    arr = np.array(frame.to_image().resize((160, 90)).convert("L"), dtype=np.int16)
                     if prev is not None:
                         times.append(pts_time)
                         diffs.append(float(np.mean(np.abs(arr - prev))))
@@ -344,7 +344,7 @@ class AdaptiveSampler:
                         if isinstance(frame, av.VideoFrame):
                             # Map to closest target timestamp index
                             if self.method == "uniform":
-                                closest_idx = int(round(pts_time / interval_val))
+                                closest_idx = min(int(round(pts_time / interval_val)), num_samples - 1)
                             else:
                                 closest_idx = min(
                                     range(num_samples),
@@ -368,7 +368,7 @@ class AdaptiveSampler:
                         elif isinstance(frame, av.AudioFrame) and has_audio:
                             # Map audio segment to closest target timestamp window
                             if self.method == "uniform":
-                                idx = int(pts_time / interval_val)
+                                idx = min(int(pts_time / interval_val), num_samples - 1)
                             else:
                                 idx = min(
                                     range(num_samples),
@@ -379,17 +379,31 @@ class AdaptiveSampler:
                                 audio_buffers[idx].append((plane_bytes, frame.samples))
 
                 # 6. Finalize Samples
+                unfilled_count = sum(1 for fd in frames_data if fd is None)
+                if unfilled_count > 0:
+                    logger.warning(
+                        f"{unfilled_count}/{num_samples} frame slots were not filled during "
+                        f"decoding. Falling back to nearest filled frame for each gap."
+                    )
+
                 for i in range(num_samples):
                     timestamp = target_timestamps[i]
                     frame_bytes = frames_data[i]
 
-                    # Fallback for missing frames
+                    # Fallback for missing frames: clone the nearest filled slot
                     if frame_bytes is None:
+                        best_dist = float("inf")
                         for fallback_idx in range(num_samples):
                             if frames_data[fallback_idx] is not None:
-                                frame_bytes = frames_data[fallback_idx]
-                                break
+                                dist = abs(fallback_idx - i)
+                                if dist < best_dist:
+                                    best_dist = dist
+                                    frame_bytes = frames_data[fallback_idx]
                         if frame_bytes is None:
+                            logger.error(
+                                f"No decoded frames available at all for '{Path(video_path).name}'. "
+                                f"Creating dummy black frame — vision provider will produce no useful observations."
+                            )
                             import PIL.Image
                             dummy_img = PIL.Image.new("RGB", (320, 240), color="black")
                             buf = io.BytesIO()

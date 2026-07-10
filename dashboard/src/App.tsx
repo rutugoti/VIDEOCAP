@@ -485,7 +485,7 @@ export const App: React.FC = () => {
                   Our architecture leverages the **Llama** family of open models to handle the core language reasoning and multimodal tasks of the Video Captioning Pipeline. Llama-3.3-70b-versatile acts as the primary brain, executing event timeline fusion, narrative building, and final caption generation using a unified Semantic Contract.
                 </p>
                 <p>
-                  By utilizing Llama's advanced reasoning capabilities, the system accurately generates captions within the strict 15-35 word limit across four complex styles (Formal, Sarcastic, Humorous Tech, Humorous Non-Tech) while eliminating hallucinations.
+                  By utilizing Llama's advanced reasoning capabilities, the system accurately generates captions within the strict 50-70 word limit across four complex styles (Formal, Sarcastic, Humorous Tech, Humorous Non-Tech) while eliminating hallucinations.
                 </p>
               </div>
 

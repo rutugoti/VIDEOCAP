@@ -335,12 +335,12 @@ class SimulatedJudge:
                 completeness_score -= (missing_events / len(narrative.key_events)) * 10.0
             completeness_score = max(0.0, completeness_score)
 
-            # 4. Conciseness (ideal budget: 15-35 words)
+            # 4. Conciseness (ideal budget: 50-70 words)
             w_count = len(text.split())
-            if 15 <= w_count <= 35:
+            if 50 <= w_count <= 70:
                 conciseness_score = 10.0
             else:
-                deviation = min(abs(w_count - 15), abs(w_count - 35))
+                deviation = min(abs(w_count - 50), abs(w_count - 70))
                 conciseness_score = max(0.0, 10.0 - (deviation * 0.5))
 
             # 5. Cross-Style Consistency

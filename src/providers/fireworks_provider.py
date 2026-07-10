@@ -171,16 +171,18 @@ class FireworksProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider
 
         system_prompt = (
             "You are an expert video analysis assistant. Analyze the sequence of keyframes and extract observations.\n"
-            "Return a JSON list of objects matching this schema:\n"
-            "[\n"
-            "  {\n"
-            "    \"content\": \"description of what is seen in this frame\",\n"
-            "    \"timestamp\": float (the exact timestamp of the frame this was observed in, e.g. 1.25),\n"
-            "    \"confidence\": float (0.0 to 1.0),\n"
-            "    \"observation_type\": \"object\" | \"action\" | \"scene\" | \"emotion\"\n"
-            "  }\n"
-            "]\n"
-            "Return ONLY the valid JSON list. Do not wrap in markdown or add notes."
+            "Return a JSON object matching this schema:\n"
+            "{\n"
+            "  \"observations\": [\n"
+            "    {\n"
+            "      \"content\": \"description of what is seen in this frame\",\n"
+            "      \"timestamp\": float (the exact timestamp of the frame this was observed in, e.g. 1.25),\n"
+            "      \"confidence\": float (0.0 to 1.0),\n"
+            "      \"observation_type\": \"object\" | \"action\" | \"scene\" | \"emotion\"\n"
+            "    }\n"
+            "  ]\n"
+            "}\n"
+            "Return ONLY the valid JSON object. Do not wrap in markdown or add notes."
         )
 
         user_content = [
@@ -191,8 +193,10 @@ class FireworksProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider
         ]
 
         valid_timestamps = []
+        skipped_count = 0
         for idx, frame in enumerate(frames):
             if not getattr(frame, "frame_data", None):
+                skipped_count += 1
                 continue
             base64_image = base64.b64encode(frame.frame_data).decode("utf-8")
             image_url = f"data:image/jpeg;base64,{base64_image}"
@@ -202,6 +206,16 @@ class FireworksProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider
                 "type": "image_url",
                 "image_url": {"url": image_url}
             })
+
+        if skipped_count > 0:
+            logger.warning(
+                f"Fireworks Vision: skipped {skipped_count}/{len(frames)} frames with empty frame_data. "
+                f"Only {len(valid_timestamps)} frames will be analyzed."
+            )
+
+        if not valid_timestamps:
+            logger.error("Fireworks Vision: all frames had empty frame_data — returning empty observations.")
+            return []
 
         user_content.append({"type": "text", "text": f"\nPrompt: {prompt}"})
 
@@ -246,7 +260,12 @@ class FireworksProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider
             text = response.choices[0].message.content.strip()
             parsed = _parse_and_repair_json(text)
             if isinstance(parsed, dict):
-                parsed = [parsed]
+                for val in parsed.values():
+                    if isinstance(val, list) and all(isinstance(x, dict) for x in val):
+                        parsed = val
+                        break
+                else:
+                    parsed = [parsed]
 
             if isinstance(parsed, list):
                 for item in parsed:
@@ -361,14 +380,16 @@ class FireworksProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider
             system_prompt = (
                 "You are an expert OCR and text detection assistant. Analyze the image and extract any visible text.\n"
                 "This includes signs, subtitles, logos, labels, or brand names.\n"
-                "Return a JSON list of objects matching this schema:\n"
-                "[\n"
-                "  {\n"
-                "    \"text\": \"detected text content\",\n"
-                "    \"confidence\": float (0.0 to 1.0)\n"
-                "  }\n"
-                "]\n"
-                "Return ONLY the valid JSON list. If no text is visible, return an empty list."
+                "Return a JSON object matching this schema:\n"
+                "{\n"
+                "  \"text_detections\": [\n"
+                "    {\n"
+                "      \"text\": \"detected text content\",\n"
+                "      \"confidence\": float (0.0 to 1.0)\n"
+                "    }\n"
+                "  ]\n"
+                "}\n"
+                "Return ONLY the valid JSON object. If no text is visible, return an empty list."
             )
 
             def _api_call():
@@ -429,7 +450,12 @@ class FireworksProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider
                 text = response.choices[0].message.content.strip()
                 parsed = _parse_and_repair_json(text)
                 if isinstance(parsed, dict):
-                    parsed = [parsed]
+                    for val in parsed.values():
+                        if isinstance(val, list) and all(isinstance(x, dict) for x in val):
+                            parsed = val
+                            break
+                    else:
+                        parsed = [parsed]
                 
                 res_obs = []
                 if isinstance(parsed, list):

@@ -299,30 +299,30 @@ class MockLLMProvider(LLMProvider):
         if is_single_pass:
             if "test_missing_key" in prompt_lower:
                 return """{
-                    "sarcastic": "Oh fantastic, another video where events happen. Absolutely groundbreaking.",
-                    "tech_humor": "EventLoop returned status code 200 after resolving kitchen tasks successfully.",
-                    "non_tech_humor": "Well, the kitchen is clean but the coffee is gone."
+                    "sarcastic": "Oh fantastic, another video where events happen. Absolutely groundbreaking, and I am completely thrilled by this development. Someone walks into a kitchen like they own the place, turns on a coffee maker as if that is some kind of revolutionary achievement, and then exits without so much as a thank you. Truly the content we have all been desperately waiting for.",
+                    "tech_humor": "EventLoop returned status code 200 after resolving kitchen tasks successfully and flushing the local cache. The main thread spawned a subprocess to handle coffee maker initialization, which compiled without errors on the first attempt. After the brew cycle completed execution, the process gracefully terminated and freed all allocated memory, leaving the kitchen namespace clean and garbage collected.",
+                    "non_tech_humor": "Well, the kitchen is clean but the coffee is gone. Classic morning tragedy that happens to the best of us. Someone walked in, made coffee like it was the most important mission of the day, and then just left. No note, no thanks, just an empty kitchen and the lingering aroma of freshly brewed ambition that went nowhere."
                 }"""
             elif "test_over_budget" in prompt_lower:
                 return """{
-                    "formal": "This is a extremely long and verbose response designed specifically to exceed the maximum word count limit of thirty five words on the very first attempt to trigger the retry validation block and it contains extra words to exceed the threshold easily.",
-                    "sarcastic": "Oh fantastic, another video where events happen. Absolutely groundbreaking.",
-                    "tech_humor": "EventLoop returned status code 200 after resolving kitchen tasks successfully.",
-                    "non_tech_humor": "Well, the kitchen is clean but the coffee is gone."
+                    "formal": "This is a extremely long and verbose response designed specifically to exceed the maximum word count limit of seventy words on the very first attempt to trigger the retry validation block and it contains extra words to exceed the threshold easily. The individual carefully enters the kitchen premises, methodically inspects each modern appliance on the counter, activates the coffee brewing apparatus with deliberate precision, waits patiently for the cycle to complete, and subsequently exits the area in an orderly fashion without disturbing any objects.",
+                    "sarcastic": "Oh fantastic, another video where events happen. Absolutely groundbreaking, and I am completely thrilled by this development. Someone walks into a kitchen like they own the place, turns on a coffee maker as if that is some kind of revolutionary achievement, and then exits without so much as a thank you. Truly the content we have all been desperately waiting for.",
+                    "tech_humor": "EventLoop returned status code 200 after resolving kitchen tasks successfully and flushing the local cache. The main thread spawned a subprocess to handle coffee maker initialization, which compiled without errors on the first attempt. After the brew cycle completed execution, the process gracefully terminated and freed all allocated memory, leaving the kitchen namespace clean and garbage collected.",
+                    "non_tech_humor": "Well, the kitchen is clean but the coffee is gone. Classic morning tragedy that happens to the best of us. Someone walked in, made coffee like it was the most important mission of the day, and then just left. No note, no thanks, just an empty kitchen and the lingering aroma of freshly brewed ambition that went nowhere."
                 }"""
             elif "test_low_separation" in prompt_lower:
                 return """{
-                    "formal": "A person enters the kitchen, starts the coffee maker, and exits.",
-                    "sarcastic": "Oh fantastic, another video where events happen.",
-                    "tech_humor": "EventLoop returned status code 200 after resolving kitchen tasks successfully.",
-                    "non_tech_humor": "EventLoop returned status code 200 after resolving kitchen tasks successfully."
+                    "formal": "A formal rewrite of the video narrative detailing events sequentially, ensuring all facts are preserved. The individual enters the kitchen area, carefully inspects the modern appliances present on the counter, and proceeds to activate the coffee maker. Following the successful operation of the appliance, the individual exits the kitchen premises in an orderly and deliberate manner, concluding the observed sequence of events.",
+                    "sarcastic": "Oh fantastic, another video where events happen. Absolutely groundbreaking, and I am completely thrilled by this development. Someone walks into a kitchen like they own the place, turns on a coffee maker as if that is some kind of revolutionary achievement, and then exits without so much as a thank you. Truly the content we have all been desperately waiting for.",
+                    "tech_humor": "EventLoop returned status code 200 after resolving kitchen tasks successfully and flushing the local cache. The main thread spawned a subprocess to handle coffee maker initialization, which compiled without errors on the first attempt. After the brew cycle completed execution, the process gracefully terminated and freed all allocated memory, leaving the kitchen namespace clean and garbage collected.",
+                    "non_tech_humor": "EventLoop returned status code 200 after resolving kitchen tasks successfully and flushing the local cache. The main thread spawned a subprocess to handle coffee maker initialization, which compiled without errors on the first attempt. After the brew cycle completed execution, the process gracefully terminated and freed all allocated memory, leaving the kitchen namespace clean and garbage collected."
                 }"""
             else:
                 return """{
-                    "formal": "A formal rewrite of the video narrative detailing events sequentially, ensuring all facts are preserved.",
-                    "sarcastic": "Oh fantastic, another video where events happen. Absolutely groundbreaking, and I am completely thrilled by this development.",
-                    "tech_humor": "EventLoop returned status code 200 after resolving kitchen tasks successfully and flushing the local cache.",
-                    "non_tech_humor": "Well, the kitchen is clean but the coffee is gone. Classic morning tragedy that happens to the best of us."
+                    "formal": "A formal rewrite of the video narrative detailing events sequentially, ensuring all facts are preserved. The individual enters the kitchen area, carefully inspects the modern appliances present on the counter, and proceeds to activate the coffee maker. Following the successful operation of the appliance, the individual exits the kitchen premises in an orderly and deliberate manner, concluding the observed sequence of events.",
+                    "sarcastic": "Oh fantastic, another video where events happen. Absolutely groundbreaking, and I am completely thrilled by this development. Someone walks into a kitchen like they own the place, turns on a coffee maker as if that is some kind of revolutionary achievement, and then exits without so much as a thank you. Truly the content we have all been desperately waiting for.",
+                    "tech_humor": "EventLoop returned status code 200 after resolving kitchen tasks successfully and flushing the local cache. The main thread spawned a subprocess to handle coffee maker initialization, which compiled without errors on the first attempt. After the brew cycle completed execution, the process gracefully terminated and freed all allocated memory, leaving the kitchen namespace clean and garbage collected.",
+                    "non_tech_humor": "Well, the kitchen is clean but the coffee is gone. Classic morning tragedy that happens to the best of us. Someone walked in, made coffee like it was the most important mission of the day, and then just left. No note, no thanks, just an empty kitchen and the lingering aroma of freshly brewed ambition that went nowhere."
                 }"""
 
         # Check system prompt first (specific role indicators to avoid positive/negative rule collisions)
@@ -372,13 +372,13 @@ class MockLLMProvider(LLMProvider):
                     "overall_pass": true
                 }"""
         elif "software engineer" in sys_lower or "tech_humor" in sys_lower:
-            return "EventLoop returned status code 200 after resolving kitchen tasks successfully and flushing the local cache."
+            return "EventLoop returned status code 200 after resolving kitchen tasks successfully and flushing the local cache. The main thread spawned a subprocess to handle coffee maker initialization, which compiled without errors on the first attempt. After the brew cycle completed execution, the process gracefully terminated and freed all allocated memory, leaving the kitchen namespace clean and garbage collected."
         elif "funny social media" in sys_lower or "non_tech_humor" in sys_lower or "non-tech" in sys_lower:
-            return "Well, the kitchen is clean but the coffee is gone. Classic morning tragedy that happens to the best of us."
+            return "Well, the kitchen is clean but the coffee is gone. Classic morning tragedy that happens to the best of us. Someone walked in, made coffee like it was the most important mission of the day, and then just left. No note, no thanks, just an empty kitchen and the lingering aroma of freshly brewed ambition that went nowhere."
         elif "sarcastic" in sys_lower:
-            return "Oh fantastic, another video where events happen. Absolutely groundbreaking, and I am completely thrilled by this development."
+            return "Oh fantastic, another video where events happen. Absolutely groundbreaking, and I am completely thrilled by this development. Someone walks into a kitchen like they own the place, turns on a coffee maker as if that is some kind of revolutionary achievement, and then exits without so much as a thank you. Truly the content we have all been desperately waiting for."
         elif "technical writer" in sys_lower or "formal" in sys_lower:
-            return "A formal rewrite of the video narrative detailing events sequentially, ensuring all facts are preserved."
+            return "A formal rewrite of the video narrative detailing events sequentially, ensuring all facts are preserved. The individual enters the kitchen area, carefully inspects the modern appliances present on the counter, and proceeds to activate the coffee maker. Following the successful operation of the appliance, the individual exits the kitchen premises in an orderly and deliberate manner, concluding the observed sequence of events."
 
         # Fallback to prompt-based checks
         if "narrative" in prompt_lower or "compress" in prompt_lower or "summary" in prompt_lower:
@@ -426,13 +426,13 @@ class MockLLMProvider(LLMProvider):
                 }
             ]"""
         elif "formal" in prompt_lower:
-            return "A formal rewrite of the video narrative detailing events sequentially, ensuring all facts are preserved."
+            return "A formal rewrite of the video narrative detailing events sequentially, ensuring all facts are preserved. The individual enters the kitchen area, carefully inspects the modern appliances present on the counter, and proceeds to activate the coffee maker. Following the successful operation of the appliance, the individual exits the kitchen premises in an orderly and deliberate manner, concluding the observed sequence of events."
         elif "sarcastic" in prompt_lower:
-            return "Oh fantastic, another video where events happen. Absolutely groundbreaking, and I am completely thrilled by this development."
+            return "Oh fantastic, another video where events happen. Absolutely groundbreaking, and I am completely thrilled by this development. Someone walks into a kitchen like they own the place, turns on a coffee maker as if that is some kind of revolutionary achievement, and then exits without so much as a thank you. Truly the content we have all been desperately waiting for."
         elif "tech_humor" in prompt_lower or "software engineering" in prompt_lower or "programming" in prompt_lower or "tech metaphor" in prompt_lower:
-            return "EventLoop returned status code 200 after resolving kitchen tasks successfully and flushing the local cache."
+            return "EventLoop returned status code 200 after resolving kitchen tasks successfully and flushing the local cache. The main thread spawned a subprocess to handle coffee maker initialization, which compiled without errors on the first attempt. After the brew cycle completed execution, the process gracefully terminated and freed all allocated memory, leaving the kitchen namespace clean and garbage collected."
         elif "humor" in prompt_lower or "funny" in prompt_lower:
-            return "Well, the kitchen is clean but the coffee is gone. Classic morning tragedy that happens to the best of us."
+            return "Well, the kitchen is clean but the coffee is gone. Classic morning tragedy that happens to the best of us. Someone walked in, made coffee like it was the most important mission of the day, and then just left. No note, no thanks, just an empty kitchen and the lingering aroma of freshly brewed ambition that went nowhere."
         return "Generic mock LLM text response."
 
 

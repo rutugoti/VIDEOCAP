@@ -389,7 +389,7 @@ export const VideoComparison: React.FC<VideoComparisonProps> = ({
           </div>
 
           <div className="flex justify-between items-center text-[10px] font-mono pt-1 text-gray-500">
-            <span>Word Budget Constraint: PASS (15-35 words)</span>
+            <span>Word Budget Constraint: {validatorScores.word_budget_pass ? "PASS" : "FAIL"} (50-70 words)</span>
             <span>Overall Confidence: {(validatorScores.overall_confidence * 100).toFixed(0)}%</span>
           </div>
         </div>

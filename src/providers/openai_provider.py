@@ -118,14 +118,16 @@ class OpenAIProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider, E
 
             system_prompt = (
                 "You are an expert video analysis assistant. Analyze the image and extract observations.\n"
-                "Return a JSON list of objects matching this schema:\n"
-                "[\n"
-                "  {\n"
-                "    \"content\": \"description\",\n"
-                "    \"confidence\": float (0.0 to 1.0),\n"
-                "    \"observation_type\": \"object\", \"action\", \"scene\", or \"emotion\"\n"
-                "  }\n"
-                "]"
+                "Return a JSON object matching this schema:\n"
+                "{\n"
+                "  \"observations\": [\n"
+                "    {\n"
+                "      \"content\": \"description\",\n"
+                "      \"confidence\": float (0.0 to 1.0),\n"
+                "      \"observation_type\": \"object\", \"action\", \"scene\", or \"emotion\"\n"
+                "    }\n"
+                "  ]\n"
+                "}"
             )
 
             def _api_call():
@@ -164,7 +166,12 @@ class OpenAIProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider, E
                 text = response.choices[0].message.content.strip()
                 parsed = json.loads(text)
                 if isinstance(parsed, dict):
-                    parsed = [parsed]
+                    for val in parsed.values():
+                        if isinstance(val, list) and all(isinstance(x, dict) for x in val):
+                            parsed = val
+                            break
+                    else:
+                        parsed = [parsed]
                 
                 res_obs = []
                 if isinstance(parsed, list):
@@ -270,13 +277,15 @@ class OpenAIProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider, E
 
             system_prompt = (
                 "You are an expert OCR and text detection assistant. Analyze the image and extract any visible text.\n"
-                "Return a JSON list of objects matching this schema:\n"
-                "[\n"
-                "  {\n"
-                "    \"text\": \"detected text content\",\n"
-                "    \"confidence\": float (0.0 to 1.0)\n"
-                "  }\n"
-                "]"
+                "Return a JSON object matching this schema:\n"
+                "{\n"
+                "  \"text_detections\": [\n"
+                "    {\n"
+                "      \"text\": \"detected text content\",\n"
+                "      \"confidence\": float (0.0 to 1.0)\n"
+                "    }\n"
+                "  ]\n"
+                "}"
             )
 
             def _api_call():
@@ -315,7 +324,12 @@ class OpenAIProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider, E
                 text = response.choices[0].message.content.strip()
                 parsed = json.loads(text)
                 if isinstance(parsed, dict):
-                    parsed = [parsed]
+                    for val in parsed.values():
+                        if isinstance(val, list) and all(isinstance(x, dict) for x in val):
+                            parsed = val
+                            break
+                    else:
+                        parsed = [parsed]
                 
                 res_obs = []
                 if isinstance(parsed, list):

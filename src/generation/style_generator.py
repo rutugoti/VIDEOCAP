@@ -16,19 +16,19 @@ class StyleGenerator:
     FALLBACK_PROMPTS = {
         "formal": {
             "system": "You are a professional technical writer. Your task is to rewrite video descriptions in a formal, neutral style.",
-            "user": "Given the following video description, rewrite it as a formal caption.\n\nRules:\n- Use professional, neutral language\n- Preserve all factual content exactly\n- No humor, sarcasm, or informal language\n- Use third person\n- No contractions\n- Keep between 15-35 words\n- Do not add events not mentioned in the description\n- Do not remove any mentioned events\n\nVideo Description:\n{narrative}\n\nFormal Caption:"
+            "user": "Given the following video description, rewrite it as a formal caption.\n\nRules:\n- Use professional, neutral language\n- Preserve all factual content exactly\n- No humor, sarcasm, or informal language\n- Use third person\n- No contractions\n- Keep between 50-70 words\n- Do not add events not mentioned in the description\n- Do not remove any mentioned events\n\nVideo Description:\n{narrative}\n\nFormal Caption:"
         },
         "sarcastic": {
             "system": "You are a witty commentator known for sarcastic observations. Your task is to rewrite video descriptions sarcastically while preserving all facts.",
-            "user": "Given the following video description, rewrite it with a sarcastic tone.\n\nRules:\n- Use ironic, dismissive, or sardonic language\n- Preserve ALL factual content — do not change what happened\n- Do not invent new events\n- Attitude changes, facts don't\n- Keep between 15-35 words\n- Use rhetorical questions or understatement where appropriate\n\nVideo Description:\n{narrative}\n\nSarcastic Caption:"
+            "user": "Given the following video description, rewrite it with a sarcastic tone.\n\nRules:\n- Use ironic, dismissive, or sardonic language\n- Preserve ALL factual content — do not change what happened\n- Do not invent new events\n- Attitude changes, facts don't\n- Keep between 50-70 words\n- Use rhetorical questions or understatement where appropriate\n\nVideo Description:\n{narrative}\n\nSarcastic Caption:"
         },
         "tech_humor": {
             "system": "You are a software engineer who sees everything through the lens of programming and technology. Your task is to rewrite video descriptions using tech humor.",
-            "user": "Given the following video description, rewrite it using software engineering or technology humor.\n\nRules:\n- Use programming concepts: debugging, bugs, exceptions, memory leaks, unit tests, production, deployment, etc.\n- Map real-world events to tech metaphors\n- Preserve ALL factual content — do not change what happened\n- Do not invent events not in the description\n- The humor should come from the tech metaphor, not from changing facts\n- Keep between 15-35 words\n- Avoid non-tech humor\n\nVideo Description:\n{narrative}\n\nTech Humor Caption:"
+            "user": "Given the following video description, rewrite it using software engineering or technology humor.\n\nRules:\n- Use programming concepts: debugging, bugs, exceptions, memory leaks, unit tests, production, deployment, etc.\n- Map real-world events to tech metaphors\n- Preserve ALL factual content — do not change what happened\n- Do not invent events not in the description\n- The humor should come from the tech metaphor, not from changing facts\n- Keep between 50-70 words\n- Avoid non-tech humor\n\nVideo Description:\n{narrative}\n\nTech Humor Caption:"
         },
         "non_tech_humor": {
             "system": "You are a funny social media content creator. Your task is to rewrite video descriptions with general humor that anyone can enjoy.",
-            "user": "Given the following video description, rewrite it as a funny, relatable caption.\n\nRules:\n- Use everyday humor — no technology, programming, or engineering jokes\n- Think social media captions, stand-up comedy, observational humor\n- Preserve ALL factual content — do not change what happened\n- Do not invent events not in the description\n- Keep between 15-35 words\n- Must be clearly different from tech humor\n\nVideo Description:\n{narrative}\n\nFunny Caption:"
+            "user": "Given the following video description, rewrite it as a funny, relatable caption.\n\nRules:\n- Use everyday humor — no technology, programming, or engineering jokes\n- Think social media captions, stand-up comedy, observational humor\n- Preserve ALL factual content — do not change what happened\n- Do not invent events not in the description\n- Keep between 50-70 words\n- Must be clearly different from tech humor\n\nVideo Description:\n{narrative}\n\nFunny Caption:"
         }
     }
 
@@ -37,8 +37,8 @@ class StyleGenerator:
         llm_provider: LLMProvider,
         llm_config: Optional[LLMConfig] = None,
         prompts_dir: str = "docs/prompts",
-        min_caption_words: int = 15,
-        max_caption_words: int = 35,
+        min_caption_words: int = 50,
+        max_caption_words: int = 70,
         single_pass: bool = True,
         style_separation_min: float = 0.5,
     ):
@@ -123,7 +123,7 @@ class StyleGenerator:
             "- tech_humor: Map events to software engineering metaphors (e.g., debug, git push, EventLoop, bugs, exceptions).\n"
             "- non_tech_humor: General conversational/social media humor (no tech/programming references).\n"
             "Rules for all styles:\n"
-            "- Each caption must be strictly between 15 and 35 words.\n"
+            "- Each caption must be strictly between 50 and 70 words. To achieve this length, you must write descriptive sentences, elaborate on the details of the actions, or expand on the styling metaphors (e.g., describe the specific software metaphor steps in detail). Do not write short summaries.\n"
             "- Keep all facts from the narrative exactly. Do not invent new events or add details not in the narrative.\n"
             "- Respond with only the JSON object, no other text."
         )
@@ -186,36 +186,9 @@ class StyleGenerator:
                 )
             parsed_data[style] = val
 
-        # 2. Word count trimming with deterministic logic first, and editor rewrite fallback
+        # 2. Word count check: enforce strictly between min_caption_words and max_caption_words
         for style in styles:
-            text = parsed_data[style]
-            words = text.split()
-            if len(words) > self.max_caption_words:
-                trimmed, cut_mid = self._deterministic_trim(text)
-                if cut_mid:
-                    logger.warning(f"Trimming '{style}' would cut mid-sentence. Requesting editor rewrite from LLM.")
-                    shorter_prompt = (
-                        f"Narrative:\n{narrative.text}\n\n"
-                        f"Caption to shorten:\n{text}\n\n"
-                        f"Rewrite this caption to be strictly under {self.max_caption_words} words. Do not invent any facts."
-                    )
-                    try:
-                        shorter_response = self.llm_provider.generate(
-                            prompt=shorter_prompt,
-                            system_prompt="You are a precise editor. Shorten the text while keeping all facts.",
-                            config=self.llm_config
-                        )
-                        shortened_text = self._clean_caption(shorter_response)
-                        if len(shortened_text.split()) <= self.max_caption_words:
-                            text = shortened_text
-                        else:
-                            text, _ = self._deterministic_trim(shortened_text)
-                    except Exception as edit_err:
-                        logger.error(f"Editor rewrite failed for '{style}': {edit_err}. Using deterministic trim.")
-                        text = trimmed
-                else:
-                    text = trimmed
-            parsed_data[style] = text
+            parsed_data[style] = self._enforce_word_count(parsed_data[style], style, narrative.text)
 
         # 3. Style separation fallback (H8): Jaccard distance checks
         to_regenerate = set()
@@ -361,7 +334,7 @@ class StyleGenerator:
             "- Factual accuracy (check for hallucinations/invented facts)\n"
             "- Style fidelity (ensure tone perfectly matches requested style)\n"
             "- Grammar and spelling\n"
-            "- Word limits (strictly between 15 and 35 words)\n\n"
+            "- Word limits (strictly between 50 and 70 words)\n\n"
             "Respond in valid JSON format only, matching this schema:\n"
             "{\n"
             "  \"missing_facts\": [\"missing fact 1\", ...],\n"
@@ -409,47 +382,8 @@ class StyleGenerator:
             logger.warning(f"Rewrite generation failed for style '{style}': {e}. Falling back to draft.")
             final_text = draft_text
 
-        # 4. Word count limits check & sentence boundary truncation
-        words = final_text.split()
-        if len(words) > self.max_caption_words:
-            logger.warning(f"Style '{style}' output word count ({len(words)}) is out of bounds. Requesting shorter rewrite.")
-            shorter_prompt = (
-                f"Narrative:\n{narrative_text}\n\n"
-                f"Caption to shorten:\n{final_text}\n\n"
-                f"Rewrite this caption to be strictly under {self.max_caption_words} words. Do not invent any facts."
-            )
-            try:
-                shorter_response = self.llm_provider.generate(
-                    prompt=shorter_prompt,
-                    system_prompt=system_prompt,
-                    config=self.llm_config
-                )
-                final_text = self._clean_caption(shorter_response)
-                words = final_text.split()
-            except Exception as e:
-                logger.error(f"Shorter rewrite failed: {e}")
-
-            # If still too long, trim at sentence boundaries, NEVER cut sentences in half
-            if len(words) > self.max_caption_words:
-                logger.warning(f"Caption is still too long after rewrite. Trimming strictly at sentence boundaries.")
-                sentences = re.split(r'(?<=[.!?])\s+', final_text)
-                trimmed_parts = []
-                current_count = 0
-                for sentence in sentences:
-                    sentence_words = sentence.split()
-                    if current_count + len(sentence_words) <= self.max_caption_words:
-                        trimmed_parts.append(sentence)
-                        current_count += len(sentence_words)
-                    else:
-                        break
-                if trimmed_parts:
-                    final_text = " ".join(trimmed_parts)
-                else:
-                    first_sentence = sentences[0]
-                    first_words = first_sentence.split()
-                    final_text = " ".join(first_words[:self.max_caption_words])
-                    if not final_text.endswith("."):
-                        final_text += "."
+        # 4. Word count limits check: enforce strictly between min_caption_words and max_caption_words
+        final_text = self._enforce_word_count(final_text, style, narrative_text)
 
         metadata = {
             "prompt_version": prompt_version,
@@ -459,6 +393,81 @@ class StyleGenerator:
             "critique": critique_data
         }
         return final_text, metadata
+
+    def _enforce_word_count(self, text: str, style: str, narrative_text: str) -> str:
+        """
+        Ensures the caption for the given style is strictly within min_caption_words and max_caption_words.
+        If not, iteratively rewrites it (expanding if too short, shortening if too long).
+        """
+        system_prompt, _ = self._load_prompt(style)
+        
+        for attempt in range(1, 4):
+            words = text.split()
+            word_count = len(words)
+            
+            if self.min_caption_words <= word_count <= self.max_caption_words:
+                return text
+                
+            if word_count < self.min_caption_words:
+                logger.warning(
+                    f"Style '{style}' caption is too short ({word_count} words). "
+                    f"Attempt {attempt}/3 to expand to {self.min_caption_words}-{self.max_caption_words} words."
+                )
+                longer_prompt = (
+                    f"Narrative:\n{narrative_text}\n\n"
+                    f"Current Caption ({style} style):\n{text}\n\n"
+                    f"The current caption is too short ({word_count} words). "
+                    f"Rewrite it to be strictly between {self.min_caption_words} and {self.max_caption_words} words. "
+                    f"To do this, elaborate on the style elements or describe the events in the narrative in more detail, "
+                    f"but do NOT invent any new events or add details not grounded in the narrative."
+                )
+                try:
+                    response = self.llm_provider.generate(
+                        prompt=longer_prompt,
+                        system_prompt=system_prompt,
+                        config=self.llm_config
+                    )
+                    text = self._clean_caption(response)
+                except Exception as e:
+                    logger.error(f"Failed to expand caption for '{style}' on attempt {attempt}: {e}")
+                    
+            elif word_count > self.max_caption_words:
+                logger.warning(
+                    f"Style '{style}' caption is too long ({word_count} words). "
+                    f"Attempt {attempt}/3 to shorten to {self.min_caption_words}-{self.max_caption_words} words."
+                )
+                
+                trimmed, cut_mid = self._deterministic_trim(text)
+                if not cut_mid:
+                    text = trimmed
+                    continue
+                    
+                shorter_prompt = (
+                    f"Narrative:\n{narrative_text}\n\n"
+                    f"Current Caption ({style} style):\n{text}\n\n"
+                    f"The current caption is too long ({word_count} words). "
+                    f"Rewrite/edit it to be strictly between {self.min_caption_words} and {self.max_caption_words} words. "
+                    f"Keep all facts from the narrative exactly."
+                )
+                try:
+                    response = self.llm_provider.generate(
+                        prompt=shorter_prompt,
+                        system_prompt=system_prompt,
+                        config=self.llm_config
+                    )
+                    text = self._clean_caption(response)
+                except Exception as e:
+                    logger.error(f"Failed to shorten caption for '{style}' on attempt {attempt}: {e}")
+                    text = trimmed
+                    
+        # Final safety check: if still out of bounds, do deterministic trim
+        words = text.split()
+        if len(words) > self.max_caption_words:
+            text, _ = self._deterministic_trim(text)
+        elif len(words) < self.min_caption_words:
+            logger.warning(f"Style '{style}' caption is still too short ({len(words)} words) after retries. Keeping best effort.")
+            
+        return text
 
     def _clean_caption(self, text: str) -> str:
         """Strip enclosing quotes and extraneous formatting prefixes from the generated caption."""

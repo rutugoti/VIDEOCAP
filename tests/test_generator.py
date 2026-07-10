@@ -21,10 +21,10 @@ class LengthyLLMProvider(LLMProvider):
         if style not in self.attempts:
             self.attempts[style] = 1
             # Return long response (exceeding 35 words)
-            return "This is a extremely long and verbose response designed specifically to exceed the maximum word count limit of thirty five words on the very first attempt to trigger the retry validation block and it contains extra words to exceed the threshold easily."
+            return "This is a extremely long and verbose response designed specifically to exceed the maximum word count limit of seventy words on the very first attempt to trigger the retry validation block and it contains extra words to exceed the threshold easily. Additional padding sentences are included to ensure the word count goes well beyond the permitted maximum and forces the generator to invoke its retry logic for trimming or regeneration of the caption text output."
         else:
             # Return acceptable response (between 15 and 35 words)
-            return "This is a shorter and concise caption designed specifically to satisfy the word count limit on retry."
+            return "This is a shorter and concise caption designed specifically to satisfy the word count limit on retry. The scene captures a person methodically entering the kitchen area, examining the available equipment with focused attention, initiating the coffee preparation process, and completing the task before departing the space in an efficient and unhurried manner."
 
 
 def test_four_styles():
@@ -44,7 +44,7 @@ def test_four_styles():
         assert cap.style == style
         assert len(cap.text) > 0
         assert cap.word_count == len(cap.text.split())
-        assert 15 <= cap.word_count <= 35
+        assert 50 <= cap.word_count <= 70
 
 
 def test_style_distinction():
@@ -78,9 +78,9 @@ def test_word_limits_retry_loop():
     generator = StyleGenerator(llm_provider=lengthy_llm)
     captions = generator.generate_captions(narrative)
 
-    # All captions should have been corrected on retry to have 17 words (within 15-35 range)
+    # All captions should have been corrected on retry (within 50-70 range)
     for style, cap in captions.items():
-        assert cap.word_count == 17
+        assert 50 <= cap.word_count <= 70
         assert "shorter and concise" in cap.text
 
 
@@ -158,7 +158,7 @@ def test_single_pass_over_budget_deterministic_trim():
     # "formal" style returned is extremely long, so it gets trimmed
     assert set(captions.keys()) == {"formal", "sarcastic", "tech_humor", "non_tech_humor"}
     # The word count must be within limit (35 words)
-    assert len(captions["formal"].text.split()) <= 35
+    assert len(captions["formal"].text.split()) <= 70
 
 
 def test_single_pass_low_separation_regeneration():

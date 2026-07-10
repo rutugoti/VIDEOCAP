@@ -180,7 +180,7 @@ class PipelineOrchestrator:
         gen_llm_cfg = LLMConfig(
             provider=self.config.models.llm.provider,
             model=self.config.models.llm.model,
-            max_tokens=512,
+            max_tokens=1024,
             temperature=0.7
         )
         # Note prompts directory mapping
@@ -241,31 +241,21 @@ class PipelineOrchestrator:
         descriptor = self.video_loader.load_video(video_path)
         logger.info(f"Ingestion latency: {time.time() - t0:.2f}s | Format: {descriptor.format} | Duration: {descriptor.duration_seconds}s")
 
-        # Step 2: Sampling
+        # Step 2: Sampling — frame budgets are derived from pipeline.yaml config,
+        # never hardcoded, so that adjusting max_frames/min_frames in the config
+        # is always respected regardless of execution mode.
         t0 = time.time()
         if mode == "FAST":
-            # FAST mode: temporarily restrict sampling density to 4-5 frames
+            # FAST mode: tighten the ceiling to config's min_frames + 1
             original_max = self.adaptive_sampler.max_frames
-            original_min = self.adaptive_sampler.min_frames
-            self.adaptive_sampler.max_frames = 5
-            self.adaptive_sampler.min_frames = 4
+            self.adaptive_sampler.max_frames = self.adaptive_sampler.min_frames + 1
             samples = self.adaptive_sampler.sample_video(descriptor)
             self.adaptive_sampler.max_frames = original_max
-            self.adaptive_sampler.min_frames = original_min
-        elif mode == "BALANCED":
-            # BALANCED mode: scale target sampling to 6-10 frames
-            original_max = self.adaptive_sampler.max_frames
-            original_min = self.adaptive_sampler.min_frames
-            self.adaptive_sampler.max_frames = 10
-            self.adaptive_sampler.min_frames = 6
-            samples = self.adaptive_sampler.sample_video(descriptor)
-            self.adaptive_sampler.max_frames = original_max
-            self.adaptive_sampler.min_frames = original_min
         else:
-            # DEEP mode: full sampling capability (up to 30 frames)
+            # BALANCED and DEEP modes: use config values directly (max_frames/min_frames from pipeline.yaml)
             samples = self.adaptive_sampler.sample_video(descriptor)
-            
-        logger.info(f"Sampling latency: {time.time() - t0:.2f}s | Frames sampled: {len(samples)}")
+
+        logger.info(f"Sampling latency: {time.time() - t0:.2f}s | Frames sampled: {len(samples)} (mode={mode})")
 
         # Step 3: Perception (Parallel / Sequential / Cached)
         t0 = time.time()

@@ -9,6 +9,7 @@ import tempfile
 
 from src.config.settings import get_config
 from src.orchestration.pipeline import PipelineOrchestrator
+from src.orchestration.scheduler import BatchScheduler
 from src.providers.factory import ProviderFactory
 from src.shared.providers import (
     LegacyVisionProviderAdapter,
@@ -44,7 +45,14 @@ PER_VIDEO_TIMEOUT_S = int(os.environ.get("PER_VIDEO_TIMEOUT_S", "150"))
 BATCH_DEADLINE_S = int(os.environ.get("BATCH_DEADLINE_S", "560"))
 
 
-def _captions_for_task(orchestrator, video_path: str, requested_styles: list, timeout_s: float) -> dict:
+def _captions_for_task(
+    orchestrator,
+    video_path: str,
+    requested_styles: list,
+    timeout_s: float,
+    mode: str = "BALANCED",
+    scheduler = None
+) -> dict:
     """
     Run the pipeline for one video under a hard timeout and always return a dict with a
     caption for EVERY requested style. Any failure falls back to a generic style caption
@@ -57,7 +65,7 @@ def _captions_for_task(orchestrator, video_path: str, requested_styles: list, ti
     generated = {}
     try:
         with ThreadPoolExecutor(max_workers=1) as ex:
-            future = ex.submit(orchestrator.process_video, video_path)
+            future = ex.submit(orchestrator.process_video, video_path, mode=mode, scheduler=scheduler)
             generated = future.result(timeout=max(1.0, timeout_s))
     except FutureTimeout:
         logger.error(f"Video processing exceeded {timeout_s:.0f}s; emitting fallback captions.")
@@ -83,7 +91,7 @@ def download_video(url: str) -> str:
             url, 
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         )
-        with urllib.request.urlopen(req, timeout=120) as response, open(temp_path, "wb") as out_file:
+        with urllib.request.urlopen(req, timeout=25) as response, open(temp_path, "wb") as out_file:
             shutil.copyfileobj(response, out_file)
         logger.info(f"Successfully downloaded to {temp_path}")
         return temp_path
@@ -136,6 +144,12 @@ def run_tasks_json_pipeline(input_path: str, output_path: str, orchestrator: Pip
         except Exception as e:
             logger.warning(f"Failed to load checkpoint file {checkpoint_path}: {e}. Starting fresh.")
 
+    # Initialize Batch Scheduler
+    scheduler = BatchScheduler(total_time_limit_sec=600.0, target_margin_sec=60.0)
+    scheduler.start_batch(total_videos=len(tasks))
+    for _ in completed_task_ids:
+        scheduler.register_completed(elapsed=30.0, api_calls=2, tokens=200)
+
     for task in tasks:
         task_id = task.get("task_id")
         video_url = task.get("video_url")
@@ -153,7 +167,8 @@ def run_tasks_json_pipeline(input_path: str, output_path: str, orchestrator: Pip
 
         # Global batch deadline: if we're out of time, emit fallbacks for the remaining
         # tasks so results.json is complete rather than the run being killed mid-write.
-        time_left = BATCH_DEADLINE_S - (time.time() - batch_start)
+        elapsed_so_far = time.time() - batch_start
+        time_left = BATCH_DEADLINE_S - elapsed_so_far
         if time_left <= 5:
             logger.error(f"Batch deadline reached; emitting fallback captions for task {task_id}.")
             results.append({
@@ -161,17 +176,41 @@ def run_tasks_json_pipeline(input_path: str, output_path: str, orchestrator: Pip
                 "captions": {s: FALLBACK_CAPTIONS.get(s, "A short video scene.") for s in requested_styles},
             })
             completed_task_ids.add(task_id)
+            scheduler.register_failure()
             continue
+
+        # Decide execution mode based on remaining runtime
+        mode = scheduler.decide_execution_mode()
+        logger.info(f"Task {task_id} running in mode: {mode}")
 
         temp_video_path = None
         captions_out = None
+        t_start = time.time()
         try:
             if not video_url:
                 raise ValueError("task has no video_url")
             # 1. Download, then 2. run pipeline under timeout with guaranteed styles
             temp_video_path = download_video(video_url)
-            per_video_budget = min(PER_VIDEO_TIMEOUT_S, time_left - 2)
-            captions_out = _captions_for_task(orchestrator, temp_video_path, requested_styles, per_video_budget)
+            
+            # Dynamically compute remaining tasks to set per-video timeout budget
+            remaining_tasks = len(tasks) - len(results)
+            if remaining_tasks <= 0:
+                remaining_tasks = 1
+            dynamic_budget = min(75.0, max(30.0, time_left / remaining_tasks))
+            per_video_budget = min(dynamic_budget, time_left - 2)
+            
+            captions_out = _captions_for_task(
+                orchestrator,
+                temp_video_path,
+                requested_styles,
+                per_video_budget,
+                mode=mode,
+                scheduler=scheduler
+            )
+            elapsed = time.time() - t_start
+            api_calls = getattr(orchestrator.llm_provider, "api_calls_count", 2)
+            tokens = getattr(orchestrator.llm_provider, "tokens_count", 200)
+            scheduler.register_completed(elapsed, api_calls, tokens)
         except Exception as e:
             # Never drop a task: emit fallback captions for every requested style so the
             # clip is never zeroed by missing output.
@@ -179,6 +218,7 @@ def run_tasks_json_pipeline(input_path: str, output_path: str, orchestrator: Pip
             captions_out = {
                 s: FALLBACK_CAPTIONS.get(s, "A short video scene.") for s in requested_styles
             }
+            scheduler.register_failure()
         finally:
             if temp_video_path and os.path.exists(temp_video_path):
                 try:

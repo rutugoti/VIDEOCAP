@@ -49,8 +49,9 @@ def test_run_tasks_json_pipeline(tmp_path):
         run_tasks_json_pipeline(str(input_file), str(output_file), mock_orchestrator)
         
         # Assertions
+        from unittest.mock import ANY
         mock_download.assert_called_once_with("http://example.com/test_video.mp4")
-        mock_orchestrator.process_video.assert_called_once_with(local_temp_file)
+        mock_orchestrator.process_video.assert_called_once_with(local_temp_file, mode=ANY, scheduler=ANY)
         mock_remove.assert_any_call(local_temp_file)
         
         # Verify results.json content and schema

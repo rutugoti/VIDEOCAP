@@ -140,15 +140,17 @@ class FireworksVisionProvider(VisionProvider):
 
             system_prompt = (
                 "You are an expert video analysis assistant. Analyze the image and extract observations.\n"
-                "Return a JSON list of objects matching this schema:\n"
-                "[\n"
-                "  {\n"
-                "    \"content\": \"description of what is seen\",\n"
-                "    \"confidence\": float (0.0 to 1.0),\n"
-                "    \"observation_type\": \"object\", \"action\", \"scene\", or \"emotion\"\n"
-                "  }\n"
-                "]\n"
-                "Return ONLY the valid JSON list. Do not wrap in markdown or add notes."
+                "Return a JSON object matching this schema:\n"
+                "{\n"
+                "  \"observations\": [\n"
+                "    {\n"
+                "      \"content\": \"description of what is seen\",\n"
+                "      \"confidence\": float (0.0 to 1.0),\n"
+                "      \"observation_type\": \"object\", \"action\", \"scene\", or \"emotion\"\n"
+                "    }\n"
+                "  ]\n"
+                "}\n"
+                "Return ONLY the valid JSON object. Do not wrap in markdown or add notes."
             )
 
             def _api_call():
@@ -197,7 +199,12 @@ class FireworksVisionProvider(VisionProvider):
                 text = response.choices[0].message.content.strip()
                 parsed = _parse_and_repair_json(text)
                 if isinstance(parsed, dict):
-                    parsed = [parsed]
+                    for val in parsed.values():
+                        if isinstance(val, list) and all(isinstance(x, dict) for x in val):
+                            parsed = val
+                            break
+                    else:
+                        parsed = [parsed]
                 
                 res_obs = []
                 if isinstance(parsed, list):
@@ -328,14 +335,16 @@ class FireworksOCRProvider(OCRProvider):
             system_prompt = (
                 "You are an expert OCR and text detection assistant. Analyze the image and extract any visible text.\n"
                 "This includes signs, subtitles, logos, labels, or brand names.\n"
-                "Return a JSON list of objects matching this schema:\n"
-                "[\n"
-                "  {\n"
-                "    \"text\": \"detected text content\",\n"
-                "    \"confidence\": float (0.0 to 1.0)\n"
-                "  }\n"
-                "]\n"
-                "Return ONLY the valid JSON list. If no text is visible, return an empty list."
+                "Return a JSON object matching this schema:\n"
+                "{\n"
+                "  \"text_detections\": [\n"
+                "    {\n"
+                "      \"text\": \"detected text content\",\n"
+                "      \"confidence\": float (0.0 to 1.0)\n"
+                "    }\n"
+                "  ]\n"
+                "}\n"
+                "Return ONLY the valid JSON object. If no text is visible, return an empty list."
             )
 
             def _api_call():
@@ -384,7 +393,12 @@ class FireworksOCRProvider(OCRProvider):
                 text = response.choices[0].message.content.strip()
                 parsed = _parse_and_repair_json(text)
                 if isinstance(parsed, dict):
-                    parsed = [parsed]
+                    for val in parsed.values():
+                        if isinstance(val, list) and all(isinstance(x, dict) for x in val):
+                            parsed = val
+                            break
+                    else:
+                        parsed = [parsed]
                 
                 res_obs = []
                 if isinstance(parsed, list):
