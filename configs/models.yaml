@@ -3,29 +3,30 @@
 # There is no offline mock: if none of the listed providers has a usable API key,
 # the pipeline fails loudly rather than emitting fabricated captions.
 vision:
-  provider: ["groq", "fireworks"]
-  model: "meta-llama/llama-4-scout-17b-16e-instruct"  # Current Groq vision model
+  provider: ["fireworks", "groq"]
+  model: "accounts/fireworks/models/minimax-m3"  # Deployed Fireworks vision model
   max_tokens: 4096
   temperature: 0.2
 
 speech:
-  provider: ["groq", "fireworks"]
+  provider: ["fireworks", "groq"]
   model: "whisper-large-v3"
   language: "en"
 
 ocr:
-  provider: ["groq", "fireworks"]
-  model: "meta-llama/llama-4-scout-17b-16e-instruct"
+  provider: ["fireworks", "groq"]
+  model: "accounts/fireworks/models/qwen3p7-plus"
   max_tokens: 1024
 
 llm:
-  provider: ["groq", "fireworks"]
-  model: "llama-3.3-70b-versatile"
+  provider: ["fireworks", "groq"]
+  model: "accounts/fireworks/models/llama-v3p1-70b-instruct"
   max_tokens: 512
   temperature: 0.7
 
 validator:
-  provider: ["groq", "fireworks"]
-  model: "llama-3.3-70b-versatile"
+  provider: ["fireworks", "groq"]
+  model: "accounts/fireworks/models/llama-v3p1-70b-instruct"
   max_tokens: 1024
   temperature: 0.1
+

@@ -5,16 +5,16 @@ sampling:
   # Frame count is capped low to stay within Groq's free-tier tokens-per-minute
   # budget (vision + OCR each send one image per frame). Raise these if you have a
   # higher-throughput key.
-  max_frames: 5
-  min_frames: 4
+  max_frames: 10
+  min_frames: 6
   baseline_fps: 1.0
   min_scene_duration: 1.0
   motion_threshold: 15.0
   scene_change_threshold: 20.0
   silence_threshold: -40.0 # dB
   adaptive_sampling_limits:
-    max_samples: 5
-    min_samples: 4
+    max_samples: 10
+    min_samples: 6
 
 perception:
   parallel: true
@@ -25,7 +25,7 @@ perception:
   speech:
     enabled: true
   ocr:
-    enabled: true
+    enabled: false
 
 fusion:
   min_confidence: 0.3

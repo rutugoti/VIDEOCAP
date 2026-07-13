@@ -82,7 +82,7 @@ class OpenAIProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider, E
     def __init__(self, api_key: str, base_url: Optional[str] = None):
         self.api_key = api_key
         self.base_url = base_url
-        self.client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
+        self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=30.0) if base_url else OpenAI(api_key=api_key, timeout=30.0)
 
     def get_name(self) -> str:
         return "openai"

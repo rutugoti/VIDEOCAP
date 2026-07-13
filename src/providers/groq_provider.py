@@ -71,7 +71,7 @@ class _TokenRateLimiter:
 
 
 # Shared across all GroqProvider instances so vision, OCR and LLM share one budget.
-_GROQ_LIMITER = _TokenRateLimiter(int(os.environ.get("GROQ_TPM", "28000")))
+_GROQ_LIMITER = _TokenRateLimiter(int(os.environ.get("GROQ_TPM", "1000000")))
 
 # Rough token cost of one downscaled (<=600px) image for llama-4 vision models.
 _IMAGE_TOKEN_ESTIMATE = 2900
@@ -128,7 +128,7 @@ class GroqProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider):
     def __init__(self, api_key: str, base_url: Optional[str] = None):
         self.api_key = api_key
         self.base_url = base_url or "https://api.groq.com/openai/v1"
-        self.client = OpenAI(api_key=api_key, base_url=self.base_url)
+        self.client = OpenAI(api_key=api_key, base_url=self.base_url, timeout=30.0)
 
     def get_name(self) -> str:
         return "groq"

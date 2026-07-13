@@ -4,6 +4,7 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV LOG_LEVEL=INFO
+ENV GROQ_TPM=1000000
 
 WORKDIR /app
 
@@ -24,6 +25,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Pre-download EasyOCR models (detection & recognition) so container runs offline/without network lag
+RUN python -c "import easyocr; easyocr.Reader(['en'], gpu=False)"
 
 # Copy source code and configurations
 COPY configs/ ./configs/

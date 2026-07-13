@@ -117,7 +117,7 @@ class FireworksVisionProvider(VisionProvider):
     def __init__(self, api_key: str, base_url: str = "https://api.fireworks.ai/inference/v1"):
         self.api_key = api_key
         self.base_url = base_url
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=30.0)
 
     def analyze_frames(
         self,
@@ -243,7 +243,7 @@ class FireworksAudioProvider(AudioProvider):
     def __init__(self, api_key: str, base_url: str = "https://api.fireworks.ai/inference/v1"):
         self.api_key = api_key
         self.base_url = base_url
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=30.0)
 
     def transcribe(
         self,
@@ -312,7 +312,7 @@ class FireworksOCRProvider(OCRProvider):
     def __init__(self, api_key: str, base_url: str = "https://api.fireworks.ai/inference/v1"):
         self.api_key = api_key
         self.base_url = base_url
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=30.0)
 
     def extract_text(
         self,
@@ -439,7 +439,7 @@ class FireworksLLMProvider(LLMProvider):
     def __init__(self, api_key: str, base_url: str = "https://api.fireworks.ai/inference/v1"):
         self.api_key = api_key
         self.base_url = base_url
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=30.0)
 
     def generate(
         self,

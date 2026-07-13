@@ -144,7 +144,7 @@ class FireworksProvider(VisionProvider, SpeechProvider, OCRProvider, LLMProvider
     def __init__(self, api_key: str, base_url: Optional[str] = None):
         self.api_key = api_key
         self.base_url = base_url or "https://api.fireworks.ai/inference/v1"
-        self.client = OpenAI(api_key=api_key, base_url=self.base_url)
+        self.client = OpenAI(api_key=api_key, base_url=self.base_url, timeout=30.0)
 
     def get_name(self) -> str:
         return "fireworks"
